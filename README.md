@@ -1,30 +1,64 @@
-# Build from text
+# StressTester
 
-*Automatically synced with your [v0.app](https://v0.app) deployments*
+StressTester is a Next.js application for running AI-assisted financial stress tests. It combines deterministic simulations with optional AI workflows to extract assumptions, generate scenarios, and summarize results. The UI provides dashboards for KPIs, scenario timelines, mitigation playbooks, and data tables so teams can explore how operating plans perform under pressure.
 
-[![Deployed on Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-black?style=for-the-badge&logo=vercel)](https://vercel.com/tanishs-projects-b2bc99d6/v0-build-from-text)
-[![Built with v0](https://img.shields.io/badge/Built%20with-v0.app-black?style=for-the-badge)](https://v0.app/chat/jax9ixoJ6y5)
+## Features
 
-## Overview
+- **Interactive stress testing dashboard** with KPI overview, timeline charts, and scenario panels.
+- **AI-assisted analysis pipeline** that extracts assumptions, generates scenarios, produces mitigations, and drafts executive summaries.
+- **Deterministic stress engine** for repeatable baseline vs. stressed outcomes.
+- **Data ingestion UI** for swapping sample data with uploaded P&L, cash flow, balance sheet, and KPI inputs.
+- **Mitigation playbooks** to capture responses for high-risk or failing scenarios.
 
-This repository will stay in sync with your deployed chats on [v0.app](https://v0.app).
-Any changes you make to your deployed app will be automatically pushed to this repository from [v0.app](https://v0.app).
+## Tech Stack
 
-## Deployment
+- **Next.js 16** with React 19
+- **TypeScript**
+- **Tailwind CSS** and Radix UI components
+- **Vercel Analytics**
 
-Your project is live at:
+## Getting Started
 
-**[https://vercel.com/tanishs-projects-b2bc99d6/v0-build-from-text](https://vercel.com/tanishs-projects-b2bc99d6/v0-build-from-text)**
+### Prerequisites
 
-## Build your app
+- Node.js 18+
+- pnpm (recommended) or npm/yarn
 
-Continue building your app on:
+### Install Dependencies
 
-**[https://v0.app/chat/jax9ixoJ6y5](https://v0.app/chat/jax9ixoJ6y5)**
+```bash
+pnpm install
+```
 
-## How It Works
+### Run the App
 
-1. Create and modify your project using [v0.app](https://v0.app)
-2. Deploy your chats from the v0 interface
-3. Changes are automatically pushed to this repository
-4. Vercel deploys the latest version from this repository
+```bash
+pnpm dev
+```
+
+Visit `http://localhost:3000` to explore the StressTester UI.
+
+## Useful Scripts
+
+```bash
+pnpm dev      # Run the development server
+pnpm build    # Build for production
+pnpm start    # Start the production server
+pnpm lint     # Run linting
+```
+
+## Project Structure
+
+- `app/` — Next.js app router, layouts, and pages
+- `components/` — UI and stress-tester specific components
+- `lib/` — Sample data, stress engine, and shared types
+- `public/` — Static assets
+
+## Notes
+
+- The AI workflow is optional; the app can run deterministic analysis with sample data out of the box.
+- Uploading data through the UI triggers AI-assisted analysis when enabled.
+
+## License
+
+This project is provided as-is for internal use and experimentation.
