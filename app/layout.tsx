@@ -1,16 +1,17 @@
 import React from "react"
-import type { Metadata } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
-import { Analytics } from '@vercel/analytics/next'
-import './globals.css'
+import type { Metadata } from "next"
+import { Geist, Geist_Mono } from "next/font/google"
+import { Analytics } from "@vercel/analytics/next"
+import { AppShell } from "@/components/restaurant/app-shell"
+import "./globals.css"
 
 const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'AI Assumption Stress-Tester',
-  description: 'Production-grade AI tool for analyzing plans, forecasts, and financial statements. Extract assumptions, stress-test scenarios, and generate audit-ready reports.',
-  generator: 'v0.app',
+  title: "Restaurant Stress-Testing Copilot",
+  description: "AI-guided, deterministic stress-testing for restaurant P&L resilience.",
+  generator: "v0.app",
   icons: {
     icon: [
       {
@@ -38,7 +39,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`font-sans antialiased`}>
-        {children}
+        <AppShell>{children}</AppShell>
         <Analytics />
       </body>
     </html>

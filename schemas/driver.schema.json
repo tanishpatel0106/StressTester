@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "driver.schema.json",
+  "title": "Driver",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "driver": {
+      "type": "string",
+      "enum": [
+        "COVERS",
+        "AVERAGE_CHECK",
+        "DISCOUNT_RATE",
+        "CHANNEL_MIX",
+        "FOOD_COST_PROTEIN",
+        "FOOD_COST_PRODUCE",
+        "WASTE_PCT",
+        "MENU_MIX",
+        "LABOR_HOURS",
+        "WAGE_RATE",
+        "OVERTIME_PCT",
+        "RENT",
+        "UTILITIES",
+        "MARKETING",
+        "DELIVERY_COMMISSION",
+        "INTEREST_EXPENSE",
+        "ONE_TIME_COSTS"
+      ]
+    },
+    "category": {
+      "type": "string",
+      "enum": ["revenue", "cogs", "labor", "opex", "non_operating"]
+    }
+  },
+  "required": ["driver", "category"]
+}

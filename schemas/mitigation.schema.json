@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "mitigation.schema.json",
+  "title": "Mitigation",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string" },
+    "name": { "type": "string" },
+    "description": { "type": "string" },
+    "adjustments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "driver": {
+            "type": "string",
+            "enum": [
+              "COVERS",
+              "AVERAGE_CHECK",
+              "DISCOUNT_RATE",
+              "CHANNEL_MIX",
+              "FOOD_COST_PROTEIN",
+              "FOOD_COST_PRODUCE",
+              "WASTE_PCT",
+              "MENU_MIX",
+              "LABOR_HOURS",
+              "WAGE_RATE",
+              "OVERTIME_PCT",
+              "RENT",
+              "UTILITIES",
+              "MARKETING",
+              "DELIVERY_COMMISSION",
+              "INTEREST_EXPENSE",
+              "ONE_TIME_COSTS"
+            ]
+          },
+          "mode": { "type": "string", "enum": ["add", "multiply", "set"] },
+          "value": { "type": "number" },
+          "duration_months": { "type": "integer", "minimum": 1 }
+        },
+        "required": ["driver", "mode", "value", "duration_months"]
+      }
+    },
+    "constraints": { "type": "array", "items": { "type": "string" } },
+    "implementation_steps": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "description",
+    "adjustments",
+    "constraints",
+    "implementation_steps",
+    "confidence",
+    "evidence_refs"
+  ],
+  "allOf": [
+    {
+      "anyOf": [
+        { "properties": { "evidence_refs": { "minItems": 1 } } },
+        { "properties": { "confidence": { "const": "low" } } }
+      ]
+    }
+  ]
+}

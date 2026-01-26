@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai_scenarios_response.schema.json",
+  "title": "AI Scenarios Response",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "scenarios": {
+      "type": "array",
+      "items": { "$ref": "scenario.schema.json" }
+    }
+  },
+  "required": ["scenarios"]
+}
