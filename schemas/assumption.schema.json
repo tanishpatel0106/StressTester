@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "assumption.schema.json",
+  "title": "Driver Assumption",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string" },
+    "driver": {
+      "type": "string",
+      "enum": [
+        "COVERS",
+        "AVERAGE_CHECK",
+        "DISCOUNT_RATE",
+        "CHANNEL_MIX",
+        "FOOD_COST_PROTEIN",
+        "FOOD_COST_PRODUCE",
+        "WASTE_PCT",
+        "MENU_MIX",
+        "LABOR_HOURS",
+        "WAGE_RATE",
+        "OVERTIME_PCT",
+        "RENT",
+        "UTILITIES",
+        "MARKETING",
+        "DELIVERY_COMMISSION",
+        "INTEREST_EXPENSE",
+        "ONE_TIME_COSTS"
+      ]
+    },
+    "baseline": { "type": "number" },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min": { "type": "number" },
+        "max": { "type": "number" }
+      },
+      "required": ["min", "max"]
+    },
+    "unit": { "type": "string" },
+    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": { "type": "string" }
+  },
+  "required": ["id", "driver", "baseline", "range", "unit", "confidence", "evidence_refs"],
+  "allOf": [
+    {
+      "anyOf": [
+        { "properties": { "confidence": { "const": "low" } } },
+        { "properties": { "evidence_refs": { "minItems": 1 } } }
+      ]
+    }
+  ]
+}

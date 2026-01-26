@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "context_pack.schema.json",
+  "title": "ContextPack",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "restaurant_name": { "type": "string" },
+        "location": { "type": "string" },
+        "currency": { "type": "string" },
+        "period_start": { "type": "string" },
+        "period_end": { "type": "string" },
+        "timezone": { "type": "string" }
+      },
+      "required": ["restaurant_name", "location", "currency", "period_start", "period_end", "timezone"]
+    },
+    "kpi_series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "period": { "type": "string" },
+          "TOTAL_REVENUE": { "type": ["number", "null"] },
+          "COST_OF_GOODS_SOLD": { "type": ["number", "null"] },
+          "GROSS_PROFIT": { "type": ["number", "null"] },
+          "WAGE_COSTS": { "type": ["number", "null"] },
+          "OPERATING_EXPENSES": { "type": ["number", "null"] },
+          "NON_OPERATING_EXPENSES": { "type": ["number", "null"] },
+          "NET_PROFIT": { "type": ["number", "null"] }
+        },
+        "required": [
+          "period",
+          "TOTAL_REVENUE",
+          "COST_OF_GOODS_SOLD",
+          "GROSS_PROFIT",
+          "WAGE_COSTS",
+          "OPERATING_EXPENSES",
+          "NON_OPERATING_EXPENSES",
+          "NET_PROFIT"
+        ]
+      }
+    },
+    "derived_kpis": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "period": { "type": "string" },
+          "gross_margin_pct": { "type": ["number", "null"] },
+          "cogs_pct": { "type": ["number", "null"] },
+          "wage_pct": { "type": ["number", "null"] },
+          "prime_cost": { "type": ["number", "null"] },
+          "prime_cost_pct": { "type": ["number", "null"] },
+          "net_margin": { "type": ["number", "null"] },
+          "breakeven_revenue": { "type": ["number", "null"] }
+        },
+        "required": [
+          "period",
+          "gross_margin_pct",
+          "cogs_pct",
+          "wage_pct",
+          "prime_cost",
+          "prime_cost_pct",
+          "net_margin",
+          "breakeven_revenue"
+        ]
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "average": { "type": ["number", "null"] },
+          "trend": { "type": ["number", "null"] },
+          "volatility": { "type": ["number", "null"] },
+          "min": { "type": ["number", "null"] },
+          "max": { "type": ["number", "null"] }
+        },
+        "required": ["average", "trend", "volatility", "min", "max"]
+      }
+    },
+    "evidence_registry": {
+      "type": "array",
+      "items": { "$ref": "evidence.schema.json" }
+    }
+  },
+  "required": ["metadata", "kpi_series", "derived_kpis", "summary", "evidence_registry"]
+}

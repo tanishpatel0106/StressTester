@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai_assumptions_response.schema.json",
+  "title": "AI Assumptions Response",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "type": "array",
+      "items": { "$ref": "assumption.schema.json" }
+    }
+  },
+  "required": ["assumptions"]
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kpi.schema.json",
+  "title": "Restaurant KPI",
+  "type": "string",
+  "enum": [
+    "TOTAL_REVENUE",
+    "COST_OF_GOODS_SOLD",
+    "GROSS_PROFIT",
+    "WAGE_COSTS",
+    "OPERATING_EXPENSES",
+    "NON_OPERATING_EXPENSES",
+    "NET_PROFIT"
+  ]
+}
