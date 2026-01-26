@@ -126,6 +126,21 @@ export async function generateScenarios(
   pnl: PnLRow[],
   kpis: KPIRow[]
 ): Promise<Scenario[]> {
+  const allowedMetrics = [
+    "CAC",
+    "Churn_Rate",
+    "ARPU",
+    "Marketing_Spend",
+    "Headcount",
+    "Gross_Margin",
+    "Customers_End",
+    "New_Customers",
+    "LTV",
+    "COGS_Hosting",
+    "COGS_Support",
+    "Opex_Total",
+  ] as const
+
   const assumptionSummary = assumptions.slice(0, 10).map((a) => ({
     id: a.id,
     label: a.label || a.statement,
@@ -151,7 +166,12 @@ Return a JSON object with a "scenarios" array. Each scenario must have:
 - probability: number from 0 to 1
 - affectedAssumptions: array of assumption IDs like ["A1", "A2"]
 - expectedBreak: boolean (true if scenario would break the plan)
-- breakReason: string explaining why it breaks (or empty string if it doesn't)`
+- breakReason: string explaining why it breaks (or empty string if it doesn't)
+- changes: array of 1-3 objects with:
+  - metric: one of ${allowedMetrics.join(", ")}
+  - mode: one of "add", "multiply", "set"
+  - value: number
+  - durationMonths: positive integer (>= 1)`
 
   try {
     const { object } = await generateObject({
@@ -168,6 +188,14 @@ Return a JSON object with a "scenarios" array. Each scenario must have:
             affectedAssumptions: z.array(z.string()),
             expectedBreak: z.boolean(),
             breakReason: z.string(),
+            changes: z.array(
+              z.object({
+                metric: z.enum(allowedMetrics),
+                mode: z.enum(["add", "multiply", "set"]),
+                value: z.number(),
+                durationMonths: z.number(),
+              })
+            ),
           })
         ),
       }),
@@ -179,12 +207,35 @@ Return a JSON object with a "scenarios" array. Each scenario must have:
       const normalizedSeverity = validSeverities.includes(s.severity.toLowerCase())
         ? s.severity.toLowerCase() as "low" | "moderate" | "high" | "critical" | "severe"
         : "moderate"
+
+      const sanitizedChanges = s.changes
+        .filter((change) => allowedMetrics.includes(change.metric))
+        .map((change) => ({
+          ...change,
+          durationMonths: Math.max(1, Math.round(change.durationMonths)),
+        }))
+
+      const fallbackChange = (() => {
+        switch (normalizedSeverity) {
+          case "low":
+            return { metric: "ARPU", mode: "multiply", value: 0.97, durationMonths: 4 }
+          case "moderate":
+            return { metric: "ARPU", mode: "multiply", value: 0.93, durationMonths: 6 }
+          case "high":
+            return { metric: "ARPU", mode: "multiply", value: 0.85, durationMonths: 9 }
+          case "critical":
+          case "severe":
+            return { metric: "ARPU", mode: "multiply", value: 0.75, durationMonths: 12 }
+          default:
+            return { metric: "ARPU", mode: "multiply", value: 0.95, durationMonths: 6 }
+        }
+      })()
       
       return {
         ...s,
         severity: normalizedSeverity,
         probability: Math.max(0, Math.min(1, s.probability)),
-        changes: [],
+        changes: sanitizedChanges.length > 0 ? sanitizedChanges : [fallbackChange],
         rationale: s.description,
         expectedBreakCondition: s.breakReason || null,
         shockMagnitudes: {},
