@@ -1,0 +1,528 @@
+// Restaurant Stress-Testing Copilot - Deterministic Engine
+// LLMs reason — they NEVER calculate. All computations happen here.
+
+import type {
+  KPIDataPoint,
+  DerivedKPIs,
+  KPISummaryStats,
+  Assumption,
+  Scenario,
+  AssumptionShock,
+  Mitigation,
+  ContextPack,
+  Evidence,
+  ComputationRun,
+  CSVRow,
+  CSVParseResult,
+  DerivedKPIName,
+} from "./types"
+
+// =============================================================================
+// KPI SPINE COMPUTATIONS
+// =============================================================================
+
+/**
+ * Compute the KPI spine from raw CSV data.
+ * Ensures GROSS_PROFIT and NET_PROFIT follow the fixed formulas.
+ */
+export function computeKpiSpine(row: CSVRow): KPIDataPoint {
+  const gross_profit = row.total_revenue - row.cost_of_goods_sold
+  const net_profit = gross_profit - row.wage_costs - row.operating_expenses - row.non_operating_expenses
+
+  return {
+    date: row.date,
+    total_revenue: row.total_revenue,
+    cost_of_goods_sold: row.cost_of_goods_sold,
+    gross_profit,
+    wage_costs: row.wage_costs,
+    operating_expenses: row.operating_expenses,
+    non_operating_expenses: row.non_operating_expenses,
+    net_profit,
+  }
+}
+
+/**
+ * Compute derived KPIs from a KPI data point.
+ * These are percentages and ratios that help analyze the business.
+ */
+export function computeDerivedKpis(kpi: KPIDataPoint): DerivedKPIs {
+  const safeRevenue = kpi.total_revenue || 1 // Avoid division by zero
+
+  return {
+    gross_margin_pct: (kpi.gross_profit / safeRevenue) * 100,
+    cogs_pct: (kpi.cost_of_goods_sold / safeRevenue) * 100,
+    wage_pct: (kpi.wage_costs / safeRevenue) * 100,
+    prime_cost: kpi.cost_of_goods_sold + kpi.wage_costs,
+    prime_cost_pct: ((kpi.cost_of_goods_sold + kpi.wage_costs) / safeRevenue) * 100,
+    net_margin: (kpi.net_profit / safeRevenue) * 100,
+  }
+}
+
+/**
+ * Compute summary statistics for a series of values.
+ */
+export function computeSummaryStats(values: number[]): KPISummaryStats {
+  if (values.length === 0) {
+    return { mean: 0, min: 0, max: 0, volatility: 0, trend: 'stable' }
+  }
+
+  const mean = values.reduce((a, b) => a + b, 0) / values.length
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  
+  // Standard deviation (volatility)
+  const squaredDiffs = values.map(v => Math.pow(v - mean, 2))
+  const volatility = Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / values.length)
+
+  // Trend detection using simple linear regression slope
+  let trend: 'increasing' | 'decreasing' | 'stable' = 'stable'
+  if (values.length >= 3) {
+    const n = values.length
+    const xMean = (n - 1) / 2
+    const yMean = mean
+    
+    let numerator = 0
+    let denominator = 0
+    for (let i = 0; i < n; i++) {
+      numerator += (i - xMean) * (values[i] - yMean)
+      denominator += Math.pow(i - xMean, 2)
+    }
+    
+    const slope = denominator !== 0 ? numerator / denominator : 0
+    const normalizedSlope = slope / (mean || 1)
+    
+    if (normalizedSlope > 0.02) trend = 'increasing'
+    else if (normalizedSlope < -0.02) trend = 'decreasing'
+  }
+
+  return { mean, min, max, volatility, trend }
+}
+
+// =============================================================================
+// CSV INGESTION
+// =============================================================================
+
+/**
+ * Parse CSV text into rows with validation.
+ */
+export function parseCSV(csvText: string): CSVParseResult {
+  const lines = csvText.trim().split('\n')
+  const errors: string[] = []
+  const warnings: string[] = []
+  const data: CSVRow[] = []
+
+  if (lines.length < 2) {
+    return { success: false, data: [], errors: ['CSV must have header and at least one data row'], warnings: [] }
+  }
+
+  const header = lines[0].toLowerCase().split(',').map(h => h.trim())
+  const requiredColumns = ['date', 'total_revenue', 'cost_of_goods_sold', 'wage_costs', 'operating_expenses', 'non_operating_expenses']
+  
+  for (const col of requiredColumns) {
+    if (!header.includes(col)) {
+      errors.push(`Missing required column: ${col}`)
+    }
+  }
+
+  if (errors.length > 0) {
+    return { success: false, data: [], errors, warnings }
+  }
+
+  const columnIndex: Record<string, number> = {}
+  header.forEach((col, idx) => { columnIndex[col] = idx })
+
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim())
+    
+    if (values.length < requiredColumns.length) {
+      warnings.push(`Row ${i + 1}: Incomplete data, skipping`)
+      continue
+    }
+
+    const parseNum = (col: string): number => {
+      const val = parseFloat(values[columnIndex[col]])
+      return isNaN(val) ? 0 : val
+    }
+
+    try {
+      data.push({
+        date: values[columnIndex['date']],
+        total_revenue: parseNum('total_revenue'),
+        cost_of_goods_sold: parseNum('cost_of_goods_sold'),
+        wage_costs: parseNum('wage_costs'),
+        operating_expenses: parseNum('operating_expenses'),
+        non_operating_expenses: parseNum('non_operating_expenses'),
+      })
+    } catch (e) {
+      warnings.push(`Row ${i + 1}: Parse error, skipping`)
+    }
+  }
+
+  return { success: data.length > 0, data, errors, warnings }
+}
+
+/**
+ * Build a full context pack from CSV data.
+ */
+export function buildContextPack(
+  csvRows: CSVRow[],
+  restaurantName: string,
+  datasetId: string
+): ContextPack {
+  const kpi_series = csvRows.map(computeKpiSpine)
+  const derived_series = kpi_series.map(computeDerivedKpis)
+
+  // Build evidence registry from CSV cells
+  const evidence_registry: Evidence[] = []
+  csvRows.forEach((row, rowIdx) => {
+    Object.entries(row).forEach(([col, value]) => {
+      if (col !== 'date') {
+        evidence_registry.push({
+          id: `E${evidence_registry.length + 1}`,
+          type: 'csv_cell',
+          source: 'uploaded_csv',
+          row: rowIdx + 1,
+          column: col,
+          value,
+          timestamp: new Date().toISOString(),
+        })
+      }
+    })
+  })
+
+  // Compute derived summary stats
+  const derived_summary: Record<DerivedKPIName, KPISummaryStats> = {
+    gross_margin_pct: computeSummaryStats(derived_series.map(d => d.gross_margin_pct)),
+    cogs_pct: computeSummaryStats(derived_series.map(d => d.cogs_pct)),
+    wage_pct: computeSummaryStats(derived_series.map(d => d.wage_pct)),
+    prime_cost: computeSummaryStats(derived_series.map(d => d.prime_cost)),
+    prime_cost_pct: computeSummaryStats(derived_series.map(d => d.prime_cost_pct)),
+    net_margin: computeSummaryStats(derived_series.map(d => d.net_margin)),
+  }
+
+  return {
+    id: `CP_${datasetId}`,
+    metadata: {
+      name: restaurantName,
+      dataset_id: datasetId,
+      uploaded_at: new Date().toISOString(),
+    },
+    kpi_series,
+    derived_summary,
+    evidence_registry,
+    created_at: new Date().toISOString(),
+  }
+}
+
+// =============================================================================
+// SCENARIO APPLICATION
+// =============================================================================
+
+/**
+ * Apply a single shock to a value.
+ */
+function applyShock(baseValue: number, shock: AssumptionShock): number {
+  switch (shock.shock_type) {
+    case 'multiply':
+      return baseValue * shock.shock_value
+    case 'add':
+      return baseValue + shock.shock_value
+    case 'set':
+      return shock.shock_value
+    default:
+      return baseValue
+  }
+}
+
+/**
+ * Apply scenario shocks to assumptions and recompute KPIs.
+ * Scenarios shock ASSUMPTIONS, not KPIs directly.
+ */
+export function applyScenario(
+  baseKpis: KPIDataPoint[],
+  assumptions: Assumption[],
+  scenario: Scenario
+): KPIDataPoint[] {
+  // Create a map of assumption modifications
+  const assumptionMods: Map<string, number> = new Map()
+  
+  for (const shock of scenario.assumption_shocks) {
+    const assumption = assumptions.find(a => a.id === shock.assumption_id)
+    if (assumption) {
+      const modifiedValue = applyShock(assumption.baseline_value, shock)
+      assumptionMods.set(assumption.id, modifiedValue)
+    }
+  }
+
+  // Apply modifications to KPIs based on assumption category
+  return baseKpis.map((kpi, monthIdx) => {
+    let modifiedKpi = { ...kpi }
+
+    for (const assumption of assumptions) {
+      const modValue = assumptionMods.get(assumption.id)
+      if (modValue === undefined) continue
+
+      // Check if shock applies to this month
+      const shock = scenario.assumption_shocks.find(s => s.assumption_id === assumption.id)
+      if (shock?.duration_months && monthIdx >= shock.duration_months) continue
+
+      // Calculate the change ratio
+      const changeRatio = modValue / assumption.baseline_value
+
+      // Apply based on category (simplified mapping)
+      switch (assumption.category) {
+        case 'revenue':
+          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * changeRatio)
+          break
+        case 'cogs':
+          modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * changeRatio)
+          break
+        case 'wages':
+          modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * changeRatio)
+          break
+        case 'operating_expenses':
+          modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * changeRatio)
+          break
+        case 'non_operating_expenses':
+          modifiedKpi.non_operating_expenses = Math.round(modifiedKpi.non_operating_expenses * changeRatio)
+          break
+        case 'seasonality':
+          // Affects revenue
+          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * changeRatio)
+          break
+        case 'external':
+          // Could affect multiple - simplify to revenue
+          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * changeRatio)
+          break
+      }
+    }
+
+    // Recompute derived values to maintain KPI identities
+    modifiedKpi.gross_profit = modifiedKpi.total_revenue - modifiedKpi.cost_of_goods_sold
+    modifiedKpi.net_profit = modifiedKpi.gross_profit - modifiedKpi.wage_costs - 
+                            modifiedKpi.operating_expenses - modifiedKpi.non_operating_expenses
+
+    return modifiedKpi
+  })
+}
+
+// =============================================================================
+// MITIGATION APPLICATION
+// =============================================================================
+
+/**
+ * Apply mitigations to modify KPIs.
+ * Mitigations modify DRIVERS which affect KPIs.
+ */
+export function applyMitigations(
+  scenarioKpis: KPIDataPoint[],
+  mitigations: Mitigation[]
+): KPIDataPoint[] {
+  const enabledMitigations = mitigations.filter(m => m.enabled)
+  
+  if (enabledMitigations.length === 0) {
+    return scenarioKpis
+  }
+
+  return scenarioKpis.map(kpi => {
+    let modifiedKpi = { ...kpi }
+
+    for (const mitigation of enabledMitigations) {
+      for (const mod of mitigation.driver_modifications) {
+        // Apply driver modifications based on driver type
+        switch (mod.driver) {
+          case 'menu_price':
+          case 'average_check':
+          case 'covers':
+            // Revenue drivers
+            const revenueChange = mod.modification_type === 'increase' 
+              ? 1 + (mod.target_value / 100)
+              : mod.modification_type === 'decrease'
+              ? 1 - (mod.target_value / 100)
+              : mod.target_value / modifiedKpi.total_revenue
+            modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * revenueChange)
+            break
+            
+          case 'food_cost':
+          case 'supplier_cost':
+          case 'portion_size':
+            // COGS drivers
+            const cogsChange = mod.modification_type === 'decrease'
+              ? 1 - (mod.target_value / 100)
+              : mod.modification_type === 'increase'
+              ? 1 + (mod.target_value / 100)
+              : mod.target_value / modifiedKpi.cost_of_goods_sold
+            modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * cogsChange)
+            break
+            
+          case 'labor_hours':
+          case 'hourly_rate':
+          case 'staff_count':
+            // Wage drivers
+            const wageChange = mod.modification_type === 'decrease'
+              ? 1 - (mod.target_value / 100)
+              : mod.modification_type === 'increase'
+              ? 1 + (mod.target_value / 100)
+              : mod.target_value / modifiedKpi.wage_costs
+            modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * wageChange)
+            break
+            
+          case 'rent':
+          case 'utilities':
+          case 'marketing':
+            // Operating expense drivers
+            const opexChange = mod.modification_type === 'decrease'
+              ? 1 - (mod.target_value / 100)
+              : mod.modification_type === 'increase'
+              ? 1 + (mod.target_value / 100)
+              : mod.target_value / modifiedKpi.operating_expenses
+            modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * opexChange)
+            break
+        }
+      }
+    }
+
+    // Recompute derived values
+    modifiedKpi.gross_profit = modifiedKpi.total_revenue - modifiedKpi.cost_of_goods_sold
+    modifiedKpi.net_profit = modifiedKpi.gross_profit - modifiedKpi.wage_costs - 
+                            modifiedKpi.operating_expenses - modifiedKpi.non_operating_expenses
+
+    return modifiedKpi
+  })
+}
+
+// =============================================================================
+// COMPUTATION RUNS
+// =============================================================================
+
+/**
+ * Create a baseline computation run.
+ */
+export function computeBaseline(contextPack: ContextPack): ComputationRun {
+  const derived_results = contextPack.kpi_series.map(computeDerivedKpis)
+
+  return {
+    id: `CR_baseline_${Date.now()}`,
+    context_pack_id: contextPack.id,
+    computation_type: 'baseline',
+    input_assumptions: [],
+    kpi_results: contextPack.kpi_series,
+    derived_results,
+    summary: {
+      total_revenue_change_pct: 0,
+      net_profit_change_pct: 0,
+      prime_cost_change_pct: 0,
+      gross_margin_change_pct: 0,
+    },
+    computed_at: new Date().toISOString(),
+  }
+}
+
+/**
+ * Create a scenario computation run.
+ */
+export function computeScenario(
+  contextPack: ContextPack,
+  assumptions: Assumption[],
+  scenario: Scenario,
+  baselineRun: ComputationRun
+): ComputationRun {
+  const scenarioKpis = applyScenario(contextPack.kpi_series, assumptions, scenario)
+  const derived_results = scenarioKpis.map(computeDerivedKpis)
+
+  // Compute deltas
+  const baseTotal = baselineRun.kpi_results.reduce((sum, k) => sum + k.total_revenue, 0)
+  const scenarioTotal = scenarioKpis.reduce((sum, k) => sum + k.total_revenue, 0)
+  const baseNetProfit = baselineRun.kpi_results.reduce((sum, k) => sum + k.net_profit, 0)
+  const scenarioNetProfit = scenarioKpis.reduce((sum, k) => sum + k.net_profit, 0)
+  
+  const basePrimeCost = baselineRun.kpi_results.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
+  const scenarioPrimeCost = scenarioKpis.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
+  
+  const baseGrossMargin = baselineRun.derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / baselineRun.derived_results.length
+  const scenarioGrossMargin = derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / derived_results.length
+
+  return {
+    id: `CR_scenario_${scenario.id}_${Date.now()}`,
+    context_pack_id: contextPack.id,
+    computation_type: 'scenario',
+    scenario_id: scenario.id,
+    input_assumptions: assumptions,
+    kpi_results: scenarioKpis,
+    derived_results,
+    summary: {
+      total_revenue_change_pct: ((scenarioTotal - baseTotal) / baseTotal) * 100,
+      net_profit_change_pct: baseNetProfit !== 0 ? ((scenarioNetProfit - baseNetProfit) / Math.abs(baseNetProfit)) * 100 : 0,
+      prime_cost_change_pct: ((scenarioPrimeCost - basePrimeCost) / basePrimeCost) * 100,
+      gross_margin_change_pct: scenarioGrossMargin - baseGrossMargin,
+    },
+    computed_at: new Date().toISOString(),
+  }
+}
+
+/**
+ * Create a mitigated computation run.
+ */
+export function computeMitigated(
+  contextPack: ContextPack,
+  assumptions: Assumption[],
+  scenario: Scenario,
+  mitigations: Mitigation[],
+  baselineRun: ComputationRun,
+  scenarioRun: ComputationRun
+): ComputationRun {
+  const mitigatedKpis = applyMitigations(scenarioRun.kpi_results, mitigations)
+  const derived_results = mitigatedKpis.map(computeDerivedKpis)
+
+  // Compute deltas from baseline
+  const baseTotal = baselineRun.kpi_results.reduce((sum, k) => sum + k.total_revenue, 0)
+  const mitigatedTotal = mitigatedKpis.reduce((sum, k) => sum + k.total_revenue, 0)
+  const baseNetProfit = baselineRun.kpi_results.reduce((sum, k) => sum + k.net_profit, 0)
+  const mitigatedNetProfit = mitigatedKpis.reduce((sum, k) => sum + k.net_profit, 0)
+  
+  const basePrimeCost = baselineRun.kpi_results.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
+  const mitigatedPrimeCost = mitigatedKpis.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
+  
+  const baseGrossMargin = baselineRun.derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / baselineRun.derived_results.length
+  const mitigatedGrossMargin = derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / derived_results.length
+
+  return {
+    id: `CR_mitigated_${scenario.id}_${Date.now()}`,
+    context_pack_id: contextPack.id,
+    computation_type: 'mitigated',
+    scenario_id: scenario.id,
+    mitigation_ids: mitigations.filter(m => m.enabled).map(m => m.id),
+    input_assumptions: assumptions,
+    kpi_results: mitigatedKpis,
+    derived_results,
+    summary: {
+      total_revenue_change_pct: ((mitigatedTotal - baseTotal) / baseTotal) * 100,
+      net_profit_change_pct: baseNetProfit !== 0 ? ((mitigatedNetProfit - baseNetProfit) / Math.abs(baseNetProfit)) * 100 : 0,
+      prime_cost_change_pct: ((mitigatedPrimeCost - basePrimeCost) / basePrimeCost) * 100,
+      gross_margin_change_pct: mitigatedGrossMargin - baseGrossMargin,
+    },
+    computed_at: new Date().toISOString(),
+  }
+}
+
+// =============================================================================
+// FORMATTING UTILITIES
+// =============================================================================
+
+export function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+export function formatPercent(value: number): string {
+  return `${value.toFixed(1)}%`
+}
+
+export function formatDelta(value: number): string {
+  const sign = value >= 0 ? '+' : ''
+  return `${sign}${value.toFixed(1)}%`
+}

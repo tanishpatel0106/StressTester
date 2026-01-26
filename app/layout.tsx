@@ -8,8 +8,8 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'AI Assumption Stress-Tester',
-  description: 'Production-grade AI tool for analyzing plans, forecasts, and financial statements. Extract assumptions, stress-test scenarios, and generate audit-ready reports.',
+  title: 'Stress-Testing Copilot',
+  description: 'AI-powered stress testing for financial plans. Extract assumptions, simulate scenarios, and generate audit-ready reports for restaurants, SaaS, and more.',
   generator: 'v0.app',
   icons: {
     icon: [
