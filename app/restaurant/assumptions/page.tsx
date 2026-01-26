@@ -44,7 +44,7 @@ export default function AssumptionsPage() {
       const state = getRestaurantState(contextPackId)
       if (!state?.context_pack) return
       
-      const response = await generateAssumptions(state.context_pack, true) // Use mock for now
+      const response = await generateAssumptions(state.context_pack)
       
       setLocalAssumptions(response.assumptions)
       setIsApproved(false)
@@ -178,12 +178,12 @@ export default function AssumptionsPage() {
             {isGenerating ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Generating...
+                AI Generating...
               </>
             ) : (
               <>
                 <Sparkles className="h-4 w-4 mr-2" />
-                {assumptions.length > 0 ? 'Regenerate' : 'Generate'} Assumptions
+                {assumptions.length > 0 ? 'Regenerate with AI' : 'Generate with AI'}
               </>
             )}
           </Button>
@@ -231,7 +231,7 @@ export default function AssumptionsPage() {
           </p>
           <Button onClick={handleGenerate}>
             <Sparkles className="h-4 w-4 mr-2" />
-            Generate Assumptions
+            Generate Assumptions with AI
           </Button>
         </Card>
       )}

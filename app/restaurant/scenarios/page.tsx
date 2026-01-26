@@ -48,7 +48,7 @@ export default function ScenariosPage() {
     setError(null)
     
     try {
-      const response = await generateScenarios(state.context_pack, assumptions, true) // Use mock
+      const response = await generateScenarios(state.context_pack, assumptions)
       
       setLocalScenarios(response.scenarios)
       setIsApproved(false)
@@ -198,12 +198,12 @@ export default function ScenariosPage() {
             {isGenerating ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Generating...
+                AI Generating...
               </>
             ) : (
               <>
                 <Sparkles className="h-4 w-4 mr-2" />
-                {scenarios.length > 0 ? 'Regenerate' : 'Generate'} Scenarios
+                {scenarios.length > 0 ? 'Regenerate with AI' : 'Generate with AI'}
               </>
             )}
           </Button>
@@ -251,7 +251,7 @@ export default function ScenariosPage() {
           </p>
           <Button onClick={handleGenerate}>
             <Sparkles className="h-4 w-4 mr-2" />
-            Generate Scenarios
+            Generate Scenarios with AI
           </Button>
         </Card>
       )}

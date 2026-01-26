@@ -135,7 +135,7 @@ export default function MitigationsPage() {
     setError(null)
     
     try {
-      const response = await generateMitigations(scenario, assumptions, true) // Use mock
+      const response = await generateMitigations(scenario, assumptions)
       
       // Merge with existing mitigations for other scenarios
       const otherMitigations = mitigations.filter(m => m.scenario_id !== selectedScenarioId)
@@ -220,7 +220,7 @@ export default function MitigationsPage() {
         <div>
           <h2 className="text-2xl font-bold text-foreground">Mitigation Studio</h2>
           <p className="text-muted-foreground mt-1">
-            Generate and evaluate mitigation strategies
+            AI-powered mitigation strategies for stress scenarios
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -262,12 +262,12 @@ export default function MitigationsPage() {
                   {isGenerating ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      Generating...
+                      AI Generating...
                     </>
                   ) : (
                     <>
                       <Sparkles className="h-4 w-4 mr-2" />
-                      Generate Mitigations
+                      Generate with AI
                     </>
                   )}
                 </Button>
@@ -329,11 +329,11 @@ export default function MitigationsPage() {
           </div>
           <h3 className="text-lg font-medium mb-2">No Mitigations Yet</h3>
           <p className="text-muted-foreground max-w-md mx-auto mb-4">
-            Generate mitigation strategies for the selected scenario.
+            Generate AI-powered mitigation strategies for the selected scenario.
           </p>
           <Button onClick={handleGenerate}>
             <Sparkles className="h-4 w-4 mr-2" />
-            Generate Mitigations
+            Generate Mitigations with AI
           </Button>
         </Card>
       )}
