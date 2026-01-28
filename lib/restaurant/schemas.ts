@@ -126,7 +126,10 @@ export const AssumptionShockSchema = z.object({
   assumption_id: z.string(),
   shock_type: z.enum(['multiply', 'add', 'set']),
   shock_value: z.number(),
+  start_month_offset: z.number().optional(),
   duration_months: z.number().optional(),
+  start_date: z.string().optional(),
+  end_date: z.string().optional(),
 }).strict()
 
 export const ScenarioSchema = z.object({
@@ -243,7 +246,10 @@ export const AIScenarioOutputSchema = z.object({
     assumption_id: z.string(),
     shock_type: z.string(),
     shock_value: z.number(),
+    start_month_offset: z.number().optional(),
     duration_months: z.number().optional(),
+    start_date: z.string().optional(),
+    end_date: z.string().optional(),
   })),
   trigger_conditions: z.array(z.string()),
   expected_impact: z.string(),

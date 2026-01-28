@@ -152,7 +152,10 @@ export interface AssumptionShock {
   assumption_id: string
   shock_type: 'multiply' | 'add' | 'set'
   shock_value: number
+  start_month_offset?: number
   duration_months?: number
+  start_date?: string
+  end_date?: string
 }
 
 export interface Scenario {

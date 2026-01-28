@@ -91,7 +91,10 @@ Each scenario should have:
   - assumption_id (must match an assumption ID like A1, A2)
   - shock_type (multiply, add, or set)
   - shock_value (the multiplier, addend, or absolute value)
+  - start_month_offset (optional, 0 = first month of the dataset)
   - duration_months (optional)
+  - start_date (optional, YYYY-MM-DD)
+  - end_date (optional, YYYY-MM-DD)
 `
 
 const MITIGATIONS_PROMPT = (scenario: Scenario, assumptions: Assumption[]) => `
