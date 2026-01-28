@@ -45,7 +45,17 @@ import type {
   DerivedKPIs,
   ShockCurveType,
 } from "@/lib/restaurant/types"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+  Area,
+} from "recharts"
 
 export default function ScenariosPage() {
   const searchParams = useSearchParams()
@@ -688,7 +698,7 @@ export default function ScenariosPage() {
           if (!open) setChartScenarioId(null)
         }}
       >
-        <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
+        <DialogContent className="max-h-[85vh] max-w-6xl overflow-y-auto">
           {(() => {
             if (!chartScenarioId || !baselineRun) {
               return (
@@ -719,53 +729,115 @@ export default function ScenariosPage() {
                     Baseline vs {scenario.name} for each KPI spine metric.
                   </DialogDescription>
                 </DialogHeader>
-                <div className="grid gap-4 md:grid-cols-2">
-                  {KPI_SPINE.map((kpiName) => {
-                    const chartData = baselineRun.kpi_results.map((baselineKpi, idx) => {
-                      const scenarioKpi = scenarioRun.kpi_results[idx]
-                      return {
-                        date: formatMonthLabel(baselineKpi.date),
-                        baseline: getKpiValue(baselineKpi, kpiName),
-                        scenario: scenarioKpi ? getKpiValue(scenarioKpi, kpiName) : 0,
-                      }
-                    })
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    KPI Spine (Totals)
+                  </p>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {KPI_SPINE.map((kpiName) => {
+                      const chartData = baselineRun.kpi_results.map((baselineKpi, idx) => {
+                        const scenarioKpi = scenarioRun.kpi_results[idx]
+                        return {
+                          date: formatMonthLabel(baselineKpi.date),
+                          baseline: getKpiValue(baselineKpi, kpiName),
+                          scenario: scenarioKpi ? getKpiValue(scenarioKpi, kpiName) : 0,
+                        }
+                      })
 
-                    return (
-                      <Card key={kpiName}>
-                        <CardHeader className="pb-2">
-                          <CardTitle className="text-sm">{formatKpiLabel(kpiName)}</CardTitle>
-                          <CardDescription className="text-xs">Baseline vs scenario</CardDescription>
-                        </CardHeader>
-                        <CardContent className="h-56">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <LineChart data={chartData}>
-                              <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
-                              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
-                              <YAxis tick={{ fontSize: 10 }} />
-                              <Tooltip formatter={(value: number) => formatCurrency(Number(value))} />
-                              <Legend wrapperStyle={{ fontSize: 10 }} />
-                              <Line
-                                type="monotone"
-                                dataKey="baseline"
-                                stroke="#2563eb"
-                                strokeWidth={2}
-                                dot={false}
-                                name="Baseline"
-                              />
-                              <Line
-                                type="monotone"
-                                dataKey="scenario"
-                                stroke="#f97316"
-                                strokeWidth={2}
-                                dot={false}
-                                name="Scenario"
-                              />
-                            </LineChart>
-                          </ResponsiveContainer>
-                        </CardContent>
-                      </Card>
-                    )
-                  })}
+                      return (
+                        <Card key={kpiName}>
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">{formatKpiLabel(kpiName)}</CardTitle>
+                            <CardDescription className="text-xs">Baseline vs scenario</CardDescription>
+                          </CardHeader>
+                          <CardContent className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={chartData}>
+                                <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                                <YAxis tick={{ fontSize: 10 }} />
+                                <Tooltip formatter={(value: number) => formatCurrency(Number(value))} />
+                                <Legend wrapperStyle={{ fontSize: 10 }} />
+                                <Area
+                                  type="monotone"
+                                  dataKey="baseline"
+                                  stroke="#2563eb"
+                                  fill="#bfdbfe"
+                                  fillOpacity={0.25}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  name="Baseline"
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="scenario"
+                                  stroke="#f97316"
+                                  strokeWidth={2}
+                                  dot={false}
+                                  name="Scenario"
+                                />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Derived KPIs (Margins & Ratios)
+                  </p>
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    {DERIVED_KPIS.map((kpiName) => {
+                      const chartData = baselineRun.derived_results.map((baselineDerived, idx) => {
+                        const scenarioDerived = scenarioRun.derived_results[idx]
+                        return {
+                          date: formatMonthLabel(baselineRun.kpi_results[idx].date),
+                          baseline: getDerivedValue(baselineDerived, kpiName),
+                          scenario: scenarioDerived ? getDerivedValue(scenarioDerived, kpiName) : 0,
+                        }
+                      })
+
+                      return (
+                        <Card key={kpiName}>
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm">{formatKpiLabel(kpiName)}</CardTitle>
+                            <CardDescription className="text-xs">Baseline vs scenario (percent)</CardDescription>
+                          </CardHeader>
+                          <CardContent className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={chartData}>
+                                <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                                <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                                <YAxis tick={{ fontSize: 10 }} />
+                                <Tooltip formatter={(value: number) => formatPercent(Number(value))} />
+                                <Legend wrapperStyle={{ fontSize: 10 }} />
+                                <Area
+                                  type="monotone"
+                                  dataKey="baseline"
+                                  stroke="#16a34a"
+                                  fill="#bbf7d0"
+                                  fillOpacity={0.25}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  name="Baseline"
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="scenario"
+                                  stroke="#db2777"
+                                  strokeWidth={2}
+                                  dot={false}
+                                  name="Scenario"
+                                />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </CardContent>
+                        </Card>
+                      )
+                    })}
+                  </div>
                 </div>
               </div>
             )
