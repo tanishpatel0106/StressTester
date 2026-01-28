@@ -27,8 +27,17 @@ import {
 import { getRestaurantState, saveScenarioSet, saveComputationRun, getLatestBaseline } from "@/lib/restaurant/storage"
 import { generateScenarios } from "@/lib/restaurant/ai-client"
 import { computeScenario, formatCurrency, formatDelta, formatPercent } from "@/lib/restaurant/engine"
+import { buildShockCurve } from "@/lib/restaurant/forecasting"
 import { KPI_SPINE, DERIVED_KPIS } from "@/lib/restaurant/types"
-import type { Scenario, ScenarioSet, KPIName, DerivedKPIName, KPIDataPoint, DerivedKPIs } from "@/lib/restaurant/types"
+import type {
+  Scenario,
+  ScenarioSet,
+  KPIName,
+  DerivedKPIName,
+  KPIDataPoint,
+  DerivedKPIs,
+  ShockCurveType,
+} from "@/lib/restaurant/types"
 
 export default function ScenariosPage() {
   const searchParams = useSearchParams()
@@ -174,6 +183,28 @@ export default function ScenariosPage() {
     }
   }
 
+  const handleShockCurveChange = (scenarioId: string, curve: ShockCurveType) => {
+    const currentScenarios = localScenarios || state?.scenario_set?.scenarios || []
+    const updatedScenarios = currentScenarios.map(scenario => {
+      if (scenario.id !== scenarioId) return scenario
+      return { ...scenario, shock_curve: curve }
+    })
+
+    setLocalScenarios(updatedScenarios)
+    updateScenarioSet(updatedScenarios)
+
+    const updatedScenario = updatedScenarios.find(s => s.id === scenarioId)
+    if (updatedScenario && baselineRun && state?.context_pack) {
+      const scenarioRun = computeScenario(
+        state.context_pack,
+        assumptions,
+        updatedScenario,
+        baselineRun
+      )
+      saveComputationRun(scenarioRun)
+    }
+  }
+
   const severityColor = (sev: string) => {
     switch (sev) {
       case 'critical': return 'bg-rose-500/10 text-rose-600 border-rose-500/20'
@@ -182,6 +213,32 @@ export default function ScenariosPage() {
       case 'low': return 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20'
       default: return ''
     }
+  }
+
+  const CurveSparkline = ({ values }: { values: number[] }) => {
+    const width = 120
+    const height = 32
+    const padding = 2
+    if (values.length === 0) return null
+    const step = values.length > 1 ? (width - padding * 2) / (values.length - 1) : 0
+    const points = values.map((value, idx) => {
+      const x = padding + idx * step
+      const y = padding + (1 - value) * (height - padding * 2)
+      return `${x},${y}`
+    })
+
+    return (
+      <svg width={width} height={height} className="text-sky-500">
+        <polyline
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={points.join(" ")}
+        />
+      </svg>
+    )
   }
 
   const SeverityIcon = ({ severity }: { severity: string }) => {
@@ -345,6 +402,20 @@ export default function ScenariosPage() {
           {scenarios.map((scenario) => {
             const result = getScenarioResult(scenario.id)
             const isSelected = selectedScenarioId === scenario.id
+            const curveType = scenario.shock_curve ?? "flat"
+            const maxDuration = Math.max(
+              6,
+              ...scenario.assumption_shocks.map(shock => shock.duration_months ?? 0)
+            )
+            const horizon = Math.min(
+              state.context_pack.kpi_series.length,
+              maxDuration || 6
+            )
+            const curvePreview = buildShockCurve({
+              curve: curveType,
+              horizonMonths: horizon,
+              kpiSeries: state.context_pack.kpi_series,
+            }).values
             
             return (
               <Card 
@@ -370,6 +441,34 @@ export default function ScenariosPage() {
                   <CardDescription>{scenario.description}</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">Shock curve</p>
+                      <Select
+                        value={curveType}
+                        onValueChange={(value) => handleShockCurveChange(scenario.id, value as ShockCurveType)}
+                      >
+                        <SelectTrigger
+                          size="sm"
+                          className="min-w-[140px]"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <SelectValue placeholder="Select curve" />
+                        </SelectTrigger>
+                        <SelectContent onClick={(event) => event.stopPropagation()}>
+                          <SelectItem value="flat">Flat</SelectItem>
+                          <SelectItem value="decay">Decay</SelectItem>
+                          <SelectItem value="recovery">Recovery</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1 text-right">
+                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                        Curve preview
+                      </p>
+                      <CurveSparkline values={curvePreview} />
+                    </div>
+                  </div>
                   {/* Shocks Applied */}
                   <div>
                     <p className="text-xs font-medium text-muted-foreground mb-2">Assumption Shocks:</p>

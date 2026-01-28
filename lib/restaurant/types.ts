@@ -147,6 +147,7 @@ export interface AssumptionSet {
 // =============================================================================
 
 export type ScenarioSeverity = 'low' | 'moderate' | 'high' | 'critical'
+export type ShockCurveType = 'flat' | 'decay' | 'recovery'
 
 export interface AssumptionShock {
   assumption_id: string
@@ -164,6 +165,7 @@ export interface Scenario {
   description: string
   severity: ScenarioSeverity
   probability: number // 0-1
+  shock_curve?: ShockCurveType
   assumption_shocks: AssumptionShock[] // Shocks to assumptions, NOT to KPIs
   trigger_conditions: string[]
   expected_impact: string

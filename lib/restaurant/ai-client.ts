@@ -88,6 +88,7 @@ Each scenario should have:
 - Clear name and description
 - Severity (low/moderate/high/critical)
 - Probability (0-1)
+- Shock curve (flat, decay, recovery) optional
 - List of assumption_shocks with:
   - assumption_id (must match an assumption ID like A1, A2)
   - shock_type (multiply, add, or set)
@@ -199,6 +200,7 @@ export async function generateScenarios(
       return {
         ...s,
         id: s.id || `S${idx + 1}`,
+        shock_curve: normalizeShockCurve(s.shock_curve),
         assumption_shocks: validShocks.map(shock => ({
           ...adjustShockForScenario(
             s,
@@ -281,6 +283,13 @@ function normalizeSeverity(sev: string): Scenario['severity'] {
   const lower = sev.toLowerCase()
   const valid = ['low', 'moderate', 'high', 'critical']
   return valid.includes(lower) ? lower as Scenario['severity'] : 'moderate'
+}
+
+function normalizeShockCurve(curve?: string | null): Scenario['shock_curve'] {
+  if (!curve) return 'flat'
+  const lower = curve.toLowerCase()
+  const valid = ['flat', 'decay', 'recovery']
+  return valid.includes(lower) ? lower as Scenario['shock_curve'] : 'flat'
 }
 
 function normalizeShockType(type: string): 'multiply' | 'add' | 'set' {
