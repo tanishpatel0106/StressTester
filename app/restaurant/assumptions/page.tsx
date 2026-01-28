@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useMemo, useState, useCallback } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -8,12 +8,27 @@ import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogTrigger 
+} from "@/components/ui/dialog"
+import { 
+  Table, 
+  TableBody, 
+  TableCell, 
+  TableHead, 
+  TableHeader, 
+  TableRow 
+} from "@/components/ui/table"
+import { 
   Sparkles,
   ArrowRight,
   CheckCircle2,
   AlertCircle,
   Loader2,
-  Info,
   Edit2,
   Save,
   X,
@@ -155,9 +170,39 @@ export default function AssumptionsPage() {
     )
   }
 
+  const evidenceRegistry = state.context_pack.evidence_registry || []
+  const evidenceById = useMemo(
+    () => new Map(evidenceRegistry.map((evidence) => [evidence.id, evidence])),
+    [evidenceRegistry]
+  )
   const assumptions = localAssumptions || state.assumption_set?.assumptions || []
   const status = state.assumption_set?.status
   const isCurrentlyApproved = isApproved || status === 'approved'
+  const getEvidenceAnchor = (id: string) => `evidence-${id}`
+  const getEvidenceLocation = (id: string) => {
+    const evidence = evidenceById.get(id)
+    if (!evidence) return "Unknown source"
+    if (evidence.row != null && evidence.column) {
+      return `R${evidence.row} C${evidence.column}`
+    }
+    if (evidence.type === 'computed') {
+      return `computed from ${evidence.source}`
+    }
+    return evidence.source
+  }
+  const formatEvidenceSource = (id: string) => {
+    const evidence = evidenceById.get(id)
+    if (!evidence) return "Unknown evidence"
+    if (evidence.type === 'computed') {
+      return `Computed from ${evidence.source}`
+    }
+    return evidence.source
+  }
+  const getEvidenceValue = (id: string) => {
+    const evidence = evidenceById.get(id)
+    if (!evidence) return "Unavailable"
+    return evidence.value
+  }
 
   return (
     <div className="space-y-6">
@@ -336,22 +381,120 @@ export default function AssumptionsPage() {
                       <Badge variant="secondary" className="text-xs">
                         {assumption.category}
                       </Badge>
-                      {assumption.evidence_refs.map(ref => (
-                        <Badge key={ref} variant="outline" className="text-xs font-mono">
-                          {ref}
-                        </Badge>
-                      ))}
+                      {assumption.evidence_refs.map(ref => {
+                        const location = getEvidenceLocation(ref)
+                        const anchor = getEvidenceAnchor(ref)
+                        return (
+                          <Dialog key={ref}>
+                            <DialogTrigger asChild>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-auto gap-1 rounded-full px-2 py-0.5 text-xs font-mono"
+                                onClick={() => {
+                                  if (typeof window !== 'undefined') {
+                                    window.location.hash = anchor
+                                  }
+                                }}
+                              >
+                                <span>{ref}</span>
+                                <span className="text-muted-foreground">·</span>
+                                <span className="text-xs text-muted-foreground">View evidence</span>
+                                <span className="text-muted-foreground">·</span>
+                                <span className="text-xs text-muted-foreground">{location}</span>
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent>
+                              <DialogHeader>
+                                <DialogTitle>{ref} Evidence</DialogTitle>
+                                <DialogDescription>
+                                  Traceable context from the source data.
+                                </DialogDescription>
+                              </DialogHeader>
+                              <div className="space-y-3 text-sm">
+                                <div className="grid gap-2 text-xs">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-muted-foreground">Source</span>
+                                    <Badge variant="outline" className="font-mono text-xs">
+                                      {formatEvidenceSource(ref)}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-muted-foreground">Row</span>
+                                    <Badge variant="secondary" className="text-xs font-mono">
+                                      {evidenceById.get(ref)?.row ?? '—'}
+                                    </Badge>
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-muted-foreground">Column</span>
+                                    <Badge variant="secondary" className="text-xs font-mono">
+                                      {evidenceById.get(ref)?.column ?? '—'}
+                                    </Badge>
+                                  </div>
+                                </div>
+                                <div className="rounded-md border bg-muted/40 p-3 font-mono text-xs">
+                                  {getEvidenceValue(ref)}
+                                </div>
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                        )
+                      })}
                     </div>
-                    <p className="text-xs text-muted-foreground flex items-start gap-1">
-                      <Info className="h-3 w-3 mt-0.5 shrink-0" />
-                      {assumption.rationale}
-                    </p>
+                    <div className="rounded-md border bg-muted/30 p-3 text-xs">
+                      <p className="text-muted-foreground uppercase tracking-wide">Evidence summary</p>
+                      <p className="mt-1 text-sm text-foreground">{assumption.rationale}</p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
             </Card>
           ))}
         </div>
+      )}
+
+      {evidenceRegistry.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle id="evidence" className="text-lg">Evidence</CardTitle>
+            <CardDescription>
+              Source snippets referenced by assumptions. Jump links use evidence IDs.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>ID</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Row</TableHead>
+                  <TableHead>Column</TableHead>
+                  <TableHead>Snippet</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {evidenceRegistry.map((evidence) => (
+                  <TableRow key={evidence.id} id={getEvidenceAnchor(evidence.id)}>
+                    <TableCell className="font-mono text-xs">{evidence.id}</TableCell>
+                    <TableCell>
+                      {evidence.type === 'computed'
+                        ? `Computed from ${evidence.source}`
+                        : evidence.source}
+                    </TableCell>
+                    <TableCell>{evidence.row ?? '—'}</TableCell>
+                    <TableCell>{evidence.column ?? '—'}</TableCell>
+                    <TableCell>
+                      <div className="rounded-md border bg-muted/40 px-2 py-1 font-mono text-xs whitespace-pre-wrap">
+                        {evidence.value}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   )
