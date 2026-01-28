@@ -63,6 +63,7 @@ Each assumption must have:
 - Evidence references (use actual evidence IDs from the list)
 - Confidence level (high/medium/low)
 - If evidence is weak, set needs_user_confirmation: true
+- Rationale that explains how the evidence references taken together support the assumption
 `
 
 const SCENARIOS_PROMPT = (context: ContextPack, assumptions: Assumption[]) => `

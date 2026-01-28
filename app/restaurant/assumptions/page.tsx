@@ -29,7 +29,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
-  Info,
   Edit2,
   Save,
   X,
@@ -414,10 +413,6 @@ export default function AssumptionsPage() {
                                 </DialogDescription>
                               </DialogHeader>
                               <div className="space-y-3 text-sm">
-                                <div className="rounded-md border bg-muted/30 p-3 text-xs">
-                                  <p className="text-muted-foreground uppercase tracking-wide">Why this evidence</p>
-                                  <p className="mt-1 text-sm text-foreground">{assumption.rationale}</p>
-                                </div>
                                 <div className="grid gap-2 text-xs">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-muted-foreground">Source</span>
@@ -447,10 +442,10 @@ export default function AssumptionsPage() {
                         )
                       })}
                     </div>
-                    <p className="text-xs text-muted-foreground flex items-start gap-1">
-                      <Info className="h-3 w-3 mt-0.5 shrink-0" />
-                      {assumption.rationale}
-                    </p>
+                    <div className="rounded-md border bg-muted/30 p-3 text-xs">
+                      <p className="text-muted-foreground uppercase tracking-wide">Evidence summary</p>
+                      <p className="mt-1 text-sm text-foreground">{assumption.rationale}</p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
