@@ -201,6 +201,10 @@ export async function generateScenarios(
         assumption_shocks: validShocks.map(shock => ({
           ...shock,
           shock_type: normalizeShockType(shock.shock_type),
+          start_month_offset: shock.start_month_offset ?? undefined,
+          duration_months: shock.duration_months ?? undefined,
+          start_date: shock.start_date ?? undefined,
+          end_date: shock.end_date ?? undefined,
         })),
         severity: normalizeSeverity(s.severity),
         probability: Math.max(0, Math.min(1, s.probability)),
