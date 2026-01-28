@@ -8,6 +8,13 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Input } from "@/components/ui/input"
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -23,11 +30,11 @@ import {
   TrendingDown,
   AlertTriangle,
   Zap,
+  ChartLine,
 } from "lucide-react"
 import { getRestaurantState, saveScenarioSet, saveComputationRun, getLatestBaseline } from "@/lib/restaurant/storage"
 import { generateScenarios } from "@/lib/restaurant/ai-client"
 import { computeScenario, formatCurrency, formatDelta, formatPercent } from "@/lib/restaurant/engine"
-import { buildShockCurve } from "@/lib/restaurant/forecasting"
 import { KPI_SPINE, DERIVED_KPIS } from "@/lib/restaurant/types"
 import type {
   Scenario,
@@ -38,6 +45,7 @@ import type {
   DerivedKPIs,
   ShockCurveType,
 } from "@/lib/restaurant/types"
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from "recharts"
 
 export default function ScenariosPage() {
   const searchParams = useSearchParams()
@@ -50,6 +58,7 @@ export default function ScenariosPage() {
   const [isApproved, setIsApproved] = useState(false)
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null)
   const [selectedMonthIdx, setSelectedMonthIdx] = useState(0)
+  const [chartScenarioId, setChartScenarioId] = useState<string | null>(null)
 
   const state = getRestaurantState(contextPackId)
   
@@ -215,32 +224,6 @@ export default function ScenariosPage() {
     }
   }
 
-  const CurveSparkline = ({ values }: { values: number[] }) => {
-    const width = 120
-    const height = 32
-    const padding = 2
-    if (values.length === 0) return null
-    const step = values.length > 1 ? (width - padding * 2) / (values.length - 1) : 0
-    const points = values.map((value, idx) => {
-      const x = padding + idx * step
-      const y = padding + (1 - value) * (height - padding * 2)
-      return `${x},${y}`
-    })
-
-    return (
-      <svg width={width} height={height} className="text-sky-500">
-        <polyline
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={points.join(" ")}
-        />
-      </svg>
-    )
-  }
-
   const SeverityIcon = ({ severity }: { severity: string }) => {
     switch (severity) {
       case 'critical': return <Zap className="h-4 w-4 text-rose-600" />
@@ -269,6 +252,9 @@ export default function ScenariosPage() {
   const getDerivedValue = (derived: DerivedKPIs, name: DerivedKPIName) => {
     return derived[name]
   }
+
+  const formatMonthLabel = (date: string) =>
+    new Date(date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
 
   if (!contextPackId) {
     return (
@@ -403,19 +389,6 @@ export default function ScenariosPage() {
             const result = getScenarioResult(scenario.id)
             const isSelected = selectedScenarioId === scenario.id
             const curveType = scenario.shock_curve ?? "flat"
-            const maxDuration = Math.max(
-              6,
-              ...scenario.assumption_shocks.map(shock => shock.duration_months ?? 0)
-            )
-            const horizon = Math.min(
-              state.context_pack.kpi_series.length,
-              maxDuration || 6
-            )
-            const curvePreview = buildShockCurve({
-              curve: curveType,
-              horizonMonths: horizon,
-              kpiSeries: state.context_pack.kpi_series,
-            }).values
             
             return (
               <Card 
@@ -462,12 +435,18 @@ export default function ScenariosPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1 text-right">
-                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                        Curve preview
-                      </p>
-                      <CurveSparkline values={curvePreview} />
-                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        setChartScenarioId(scenario.id)
+                      }}
+                    >
+                      <ChartLine className="h-4 w-4" />
+                      View KPI trends
+                    </Button>
                   </div>
                   {/* Shocks Applied */}
                   <div>
@@ -702,6 +681,97 @@ export default function ScenariosPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={Boolean(chartScenarioId)}
+        onOpenChange={(open) => {
+          if (!open) setChartScenarioId(null)
+        }}
+      >
+        <DialogContent className="max-h-[85vh] max-w-5xl overflow-y-auto">
+          {(() => {
+            if (!chartScenarioId || !baselineRun) {
+              return (
+                <DialogHeader>
+                  <DialogTitle>KPI Trend Comparison</DialogTitle>
+                  <DialogDescription>Select a scenario to view the KPI trends.</DialogDescription>
+                </DialogHeader>
+              )
+            }
+
+            const scenario = scenarios.find(s => s.id === chartScenarioId)
+            const scenarioRun = getScenarioResult(chartScenarioId)
+
+            if (!scenario || !scenarioRun) {
+              return (
+                <DialogHeader>
+                  <DialogTitle>KPI Trend Comparison</DialogTitle>
+                  <DialogDescription>Scenario results are not available yet.</DialogDescription>
+                </DialogHeader>
+              )
+            }
+
+            return (
+              <div className="space-y-6">
+                <DialogHeader>
+                  <DialogTitle>KPI Trend Comparison</DialogTitle>
+                  <DialogDescription>
+                    Baseline vs {scenario.name} for each KPI spine metric.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {KPI_SPINE.map((kpiName) => {
+                    const chartData = baselineRun.kpi_results.map((baselineKpi, idx) => {
+                      const scenarioKpi = scenarioRun.kpi_results[idx]
+                      return {
+                        date: formatMonthLabel(baselineKpi.date),
+                        baseline: getKpiValue(baselineKpi, kpiName),
+                        scenario: scenarioKpi ? getKpiValue(scenarioKpi, kpiName) : 0,
+                      }
+                    })
+
+                    return (
+                      <Card key={kpiName}>
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-sm">{formatKpiLabel(kpiName)}</CardTitle>
+                          <CardDescription className="text-xs">Baseline vs scenario</CardDescription>
+                        </CardHeader>
+                        <CardContent className="h-56">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <LineChart data={chartData}>
+                              <CartesianGrid strokeDasharray="3 3" className="opacity-40" />
+                              <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                              <YAxis tick={{ fontSize: 10 }} />
+                              <Tooltip formatter={(value: number) => formatCurrency(Number(value))} />
+                              <Legend wrapperStyle={{ fontSize: 10 }} />
+                              <Line
+                                type="monotone"
+                                dataKey="baseline"
+                                stroke="#2563eb"
+                                strokeWidth={2}
+                                dot={false}
+                                name="Baseline"
+                              />
+                              <Line
+                                type="monotone"
+                                dataKey="scenario"
+                                stroke="#f97316"
+                                strokeWidth={2}
+                                dot={false}
+                                name="Scenario"
+                              />
+                            </LineChart>
+                          </ResponsiveContainer>
+                        </CardContent>
+                      </Card>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
