@@ -125,6 +125,15 @@ export default function ScenariosPage() {
     }
   }
 
+  const getDeltaDisplay = (value: number) => {
+    const isValid = Number.isFinite(value)
+    return {
+      isValid,
+      text: isValid ? formatDelta(value) : "N/A",
+      title: isValid ? undefined : "Baseline value is 0 or undefined.",
+    }
+  }
+
   // Get scenario computation result
   const getScenarioResult = (scenarioId: string) => {
     return state?.scenario_computations.find(r => r.scenario_id === scenarioId)
@@ -310,21 +319,45 @@ export default function ScenariosPage() {
                     <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border">
                       <div className="text-center">
                         <p className="text-xs text-muted-foreground">Revenue</p>
-                        <p className={`text-sm font-medium ${result.summary.total_revenue_change_pct < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                          {formatDelta(result.summary.total_revenue_change_pct)}
-                        </p>
+                        {(() => {
+                          const delta = getDeltaDisplay(result.summary.total_revenue_change_pct)
+                          return (
+                            <p
+                              className={`text-sm font-medium ${delta.isValid ? (result.summary.total_revenue_change_pct < 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}
+                              title={delta.title}
+                            >
+                              {delta.text}
+                            </p>
+                          )
+                        })()}
                       </div>
                       <div className="text-center">
                         <p className="text-xs text-muted-foreground">Net Profit</p>
-                        <p className={`text-sm font-medium ${result.summary.net_profit_change_pct < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                          {formatDelta(result.summary.net_profit_change_pct)}
-                        </p>
+                        {(() => {
+                          const delta = getDeltaDisplay(result.summary.net_profit_change_pct)
+                          return (
+                            <p
+                              className={`text-sm font-medium ${delta.isValid ? (result.summary.net_profit_change_pct < 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}
+                              title={delta.title}
+                            >
+                              {delta.text}
+                            </p>
+                          )
+                        })()}
                       </div>
                       <div className="text-center">
                         <p className="text-xs text-muted-foreground">Prime Cost</p>
-                        <p className={`text-sm font-medium ${result.summary.prime_cost_change_pct > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                          {formatDelta(result.summary.prime_cost_change_pct)}
-                        </p>
+                        {(() => {
+                          const delta = getDeltaDisplay(result.summary.prime_cost_change_pct)
+                          return (
+                            <p
+                              className={`text-sm font-medium ${delta.isValid ? (result.summary.prime_cost_change_pct > 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}
+                              title={delta.title}
+                            >
+                              {delta.text}
+                            </p>
+                          )
+                        })()}
                       </div>
                     </div>
                   )}
@@ -369,9 +402,10 @@ export default function ScenariosPage() {
                   {baselineRun.kpi_results.slice(0, 6).map((baseKpi, idx) => {
                     const scenarioRun = getScenarioResult(selectedScenarioId)
                     const scenarioKpi = scenarioRun?.kpi_results[idx]
-                    const revenueDelta = scenarioKpi 
-                      ? ((scenarioKpi.total_revenue - baseKpi.total_revenue) / baseKpi.total_revenue) * 100 
-                      : 0
+                    const revenueDelta = scenarioKpi && baseKpi.total_revenue !== 0
+                      ? ((scenarioKpi.total_revenue - baseKpi.total_revenue) / baseKpi.total_revenue) * 100
+                      : Number.NaN
+                    const revenueDeltaDisplay = getDeltaDisplay(revenueDelta)
                     
                     return (
                       <tr key={baseKpi.date} className="border-b border-border/50">
@@ -382,8 +416,11 @@ export default function ScenariosPage() {
                         <td className="text-right py-2 px-3">
                           {scenarioKpi ? formatCurrency(scenarioKpi.total_revenue) : '-'}
                         </td>
-                        <td className={`text-right py-2 px-3 ${revenueDelta < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                          {formatDelta(revenueDelta)}
+                        <td
+                          className={`text-right py-2 px-3 ${revenueDeltaDisplay.isValid ? (revenueDelta < 0 ? 'text-rose-500' : 'text-emerald-500') : 'text-muted-foreground'}`}
+                          title={revenueDeltaDisplay.title}
+                        >
+                          {revenueDeltaDisplay.text}
                         </td>
                         <td className="text-right py-2 px-3">{formatCurrency(baseKpi.net_profit)}</td>
                         <td className={`text-right py-2 px-3 ${(scenarioKpi?.net_profit || 0) < 0 ? 'text-rose-500' : ''}`}>
