@@ -244,7 +244,7 @@ export const AIScenarioOutputSchema = z.object({
   description: z.string(),
   severity: z.string(),
   probability: z.number(),
-  shock_curve: z.string().default('flat'),
+  shock_curve: z.string().nullable(),
   assumption_shocks: z.array(z.object({
     assumption_id: z.string(),
     shock_type: z.string(),
