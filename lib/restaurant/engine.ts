@@ -244,9 +244,9 @@ export function applyScenario(
   scenario: Scenario
 ): KPIDataPoint[] {
   const getChangeRatio = (baselineValue: number, modifiedValue: number, assumption: Assumption): number => {
-    if (baselineValue === 0) {
+    if (baselineValue <= 0) {
       console.warn(
-        `[Scenario] Skipping ratio for assumption ${assumption.id} (${assumption.label}) because baseline is 0.`
+        `[Scenario] Skipping ratio for assumption ${assumption.id} (${assumption.label}) because baseline is <= 0.`
       )
       return 1
     }
@@ -340,9 +340,9 @@ export function applyMitigations(
     for (const mitigation of enabledMitigations) {
       for (const mod of mitigation.driver_modifications) {
         const getReplaceRatio = (currentValue: number, targetValue: number, label: string): number => {
-          if (currentValue === 0) {
+          if (currentValue <= 0) {
             console.warn(
-              `[Mitigation] Skipping replace ratio for ${label} because current value is 0.`
+              `[Mitigation] Skipping replace ratio for ${label} because current value is <= 0.`
             )
             return 1
           }
@@ -472,9 +472,7 @@ export function computeScenario(
   const baseGrossMargin = safeAverage(baselineRun.derived_results.map(d => d.gross_margin_pct))
   const scenarioGrossMargin = safeAverage(derived_results.map(d => d.gross_margin_pct))
   const netProfitDelta = scenarioNetProfit - baseNetProfit
-  const netProfitChangePct = baseNetProfit > 0
-    ? (netProfitDelta / baseNetProfit) * 100
-    : baseTotal !== 0
+  const netProfitChangePct = baseTotal !== 0
     ? (netProfitDelta / baseTotal) * 100
     : Number.NaN
 
@@ -534,9 +532,7 @@ export function computeMitigated(
   const baseGrossMargin = safeAverage(baselineRun.derived_results.map(d => d.gross_margin_pct))
   const mitigatedGrossMargin = safeAverage(derived_results.map(d => d.gross_margin_pct))
   const netProfitDelta = mitigatedNetProfit - baseNetProfit
-  const netProfitChangePct = baseNetProfit > 0
-    ? (netProfitDelta / baseNetProfit) * 100
-    : baseTotal !== 0
+  const netProfitChangePct = baseTotal !== 0
     ? (netProfitDelta / baseTotal) * 100
     : Number.NaN
 
