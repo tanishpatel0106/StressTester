@@ -82,6 +82,7 @@ Generate 5-8 scenarios covering:
 5. External shock scenarios
 
 CRITICAL: Scenarios must shock ASSUMPTIONS by their IDs, not KPIs directly.
+For revenue decline scenarios, shocks must reduce revenue (multiply < 1, add negative).
 Each scenario should have:
 - Unique ID (S1, S2, etc.)
 - Clear name and description
@@ -91,7 +92,10 @@ Each scenario should have:
   - assumption_id (must match an assumption ID like A1, A2)
   - shock_type (multiply, add, or set)
   - shock_value (the multiplier, addend, or absolute value)
+  - start_month_offset (optional, 0 = first month of the dataset)
   - duration_months (optional)
+  - start_date (optional, YYYY-MM-DD)
+  - end_date (optional, YYYY-MM-DD)
 `
 
 const MITIGATIONS_PROMPT = (scenario: Scenario, assumptions: Assumption[]) => `
@@ -196,8 +200,11 @@ export async function generateScenarios(
         ...s,
         id: s.id || `S${idx + 1}`,
         assumption_shocks: validShocks.map(shock => ({
-          ...shock,
-          shock_type: normalizeShockType(shock.shock_type),
+          ...adjustShockForScenario(
+            s,
+            shock,
+            assumptions.find(a => a.id === shock.assumption_id)
+          ),
         })),
         severity: normalizeSeverity(s.severity),
         probability: Math.max(0, Math.min(1, s.probability)),
@@ -281,6 +288,59 @@ function normalizeShockType(type: string): 'multiply' | 'add' | 'set' {
   if (lower === 'multiply') return 'multiply'
   if (lower === 'add') return 'add'
   return 'set'
+}
+
+function adjustShockForScenario(
+  scenario: Scenario,
+  shock: Scenario['assumption_shocks'][number],
+  assumption?: Assumption
+) {
+  const normalizedShock = {
+    ...shock,
+    shock_type: normalizeShockType(shock.shock_type),
+    start_month_offset: shock.start_month_offset ?? undefined,
+    duration_months: shock.duration_months ?? undefined,
+    start_date: shock.start_date ?? undefined,
+    end_date: shock.end_date ?? undefined,
+  }
+
+  if (!assumption) return normalizedShock
+
+  const isRevenueLike =
+    assumption.category === 'revenue' ||
+    assumption.category === 'seasonality' ||
+    assumption.category === 'external'
+
+  if (!isRevenueLike) return normalizedShock
+
+  const scenarioText = `${scenario.name} ${scenario.description}`.toLowerCase()
+  const declineKeywords = ['decline', 'drop', 'decrease', 'downturn', 'pressure', 'competition', 'loss', 'slump']
+  const isDeclineScenario = declineKeywords.some(keyword => scenarioText.includes(keyword))
+
+  if (!isDeclineScenario) return normalizedShock
+
+  switch (normalizedShock.shock_type) {
+    case 'multiply': {
+      if (normalizedShock.shock_value > 1) {
+        normalizedShock.shock_value = 1 / normalizedShock.shock_value
+      }
+      break
+    }
+    case 'add': {
+      if (normalizedShock.shock_value > 0) {
+        normalizedShock.shock_value = -Math.abs(normalizedShock.shock_value)
+      }
+      break
+    }
+    case 'set': {
+      if (normalizedShock.shock_value > assumption.baseline_value) {
+        normalizedShock.shock_value = assumption.baseline_value * 0.9
+      }
+      break
+    }
+  }
+
+  return normalizedShock
 }
 
 function normalizeMitigationCategory(cat: string): Mitigation['category'] {

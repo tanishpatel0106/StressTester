@@ -1,11 +1,19 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useMemo } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { 
   Sparkles,
   ArrowRight,
@@ -18,8 +26,9 @@ import {
 } from "lucide-react"
 import { getRestaurantState, saveScenarioSet, saveComputationRun, getLatestBaseline } from "@/lib/restaurant/storage"
 import { generateScenarios } from "@/lib/restaurant/ai-client"
-import { computeScenario, formatCurrency, formatDelta } from "@/lib/restaurant/engine"
-import type { Scenario, ScenarioSet } from "@/lib/restaurant/types"
+import { computeScenario, formatCurrency, formatDelta, formatPercent } from "@/lib/restaurant/engine"
+import { KPI_SPINE, DERIVED_KPIS } from "@/lib/restaurant/types"
+import type { Scenario, ScenarioSet, KPIName, DerivedKPIName, KPIDataPoint, DerivedKPIs } from "@/lib/restaurant/types"
 
 export default function ScenariosPage() {
   const searchParams = useSearchParams()
@@ -31,6 +40,7 @@ export default function ScenariosPage() {
   const [localScenarios, setLocalScenarios] = useState<Scenario[] | null>(null)
   const [isApproved, setIsApproved] = useState(false)
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null)
+  const [selectedMonthIdx, setSelectedMonthIdx] = useState(0)
 
   const state = getRestaurantState(contextPackId)
   
@@ -107,6 +117,63 @@ export default function ScenariosPage() {
     setIsApproved(true)
   }
 
+  const monthOptions = useMemo(() => {
+    if (!baselineRun) return []
+    return baselineRun.kpi_results.map((kpi, idx) => ({
+      idx,
+      label: `${new Date(kpi.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}`,
+    }))
+  }, [baselineRun])
+
+  const updateScenarioSet = (updatedScenarios: Scenario[]) => {
+    const updatedSet: ScenarioSet = {
+      id: state?.scenario_set?.id || `SS_${Date.now()}`,
+      context_pack_id: contextPackId,
+      assumption_set_id: state?.assumption_set?.id || '',
+      scenarios: updatedScenarios,
+      status: state?.scenario_set?.status || 'draft',
+      version: (state?.scenario_set?.version || 0) + 1,
+      created_at: state?.scenario_set?.created_at || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }
+    saveScenarioSet(updatedSet)
+  }
+
+  const handleShockTimingChange = (
+    scenarioId: string,
+    shockIndex: number,
+    field: 'start_month_offset' | 'duration_months',
+    value: string
+  ) => {
+    const currentScenarios = localScenarios || state?.scenario_set?.scenarios || []
+    const parsedValue = value === "" ? undefined : Math.max(0, Number(value))
+    const updatedScenarios = currentScenarios.map(scenario => {
+      if (scenario.id !== scenarioId) return scenario
+      const updatedShocks = scenario.assumption_shocks.map((shock, idx) => {
+        if (idx !== shockIndex) return shock
+        return {
+          ...shock,
+          [field]: Number.isNaN(parsedValue) ? undefined : parsedValue,
+        }
+      })
+      return { ...scenario, assumption_shocks: updatedShocks }
+    })
+
+    setLocalScenarios(updatedScenarios)
+    updateScenarioSet(updatedScenarios)
+
+    const updatedScenario = updatedScenarios.find(s => s.id === scenarioId)
+    if (updatedScenario && baselineRun && state?.context_pack) {
+      const scenarioRun = computeScenario(
+        state.context_pack,
+        assumptions,
+        updatedScenario,
+        baselineRun
+      )
+      saveComputationRun(scenarioRun)
+    }
+  }
+
   const severityColor = (sev: string) => {
     switch (sev) {
       case 'critical': return 'bg-rose-500/10 text-rose-600 border-rose-500/20'
@@ -128,6 +195,22 @@ export default function ScenariosPage() {
   // Get scenario computation result
   const getScenarioResult = (scenarioId: string) => {
     return state?.scenario_computations.find(r => r.scenario_id === scenarioId)
+  }
+
+  const formatKpiLabel = (name: string) => {
+    return name
+      .replace(/_/g, ' ')
+      .toLowerCase()
+      .replace(/\b\w/g, l => l.toUpperCase())
+  }
+
+  const getKpiValue = (kpi: KPIDataPoint, name: KPIName) => {
+    const key = name.toLowerCase() as keyof typeof kpi
+    return kpi[key] as number
+  }
+
+  const getDerivedValue = (derived: DerivedKPIs, name: DerivedKPIName) => {
+    return derived[name]
   }
 
   if (!contextPackId) {
@@ -293,16 +376,84 @@ export default function ScenariosPage() {
                     <div className="flex flex-wrap gap-1">
                       {scenario.assumption_shocks.map((shock, idx) => {
                         const assumption = assumptions.find(a => a.id === shock.assumption_id)
+                        const startLabel = shock.start_month_offset !== undefined
+                          ? `M${shock.start_month_offset + 1}`
+                          : 'M1'
+                        const durationLabel = shock.duration_months ? `${shock.duration_months}mo` : 'open-ended'
                         return (
                           <Badge key={idx} variant="secondary" className="text-xs">
                             {assumption?.label || shock.assumption_id}: 
                             {shock.shock_type === 'multiply' && ` x${shock.shock_value}`}
                             {shock.shock_type === 'add' && ` +${shock.shock_value}`}
                             {shock.shock_type === 'set' && ` = ${shock.shock_value}`}
+                            <span className="ml-1 text-[10px] text-muted-foreground">
+                              ({startLabel}, {durationLabel})
+                            </span>
                           </Badge>
                         )
                       })}
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Shock Timing</p>
+                    {scenario.assumption_shocks.map((shock, idx) => {
+                      const assumption = assumptions.find(a => a.id === shock.assumption_id)
+                      return (
+                        <div key={`${scenario.id}-${idx}`} className="grid gap-2 text-xs md:grid-cols-3">
+                          <span className="text-muted-foreground md:col-span-1">
+                            {assumption?.label || shock.assumption_id}
+                          </span>
+                          <label
+                            className="flex items-center gap-2 text-muted-foreground"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Start month
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="0"
+                              value={shock.start_month_offset ?? ""}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) =>
+                                handleShockTimingChange(
+                                  scenario.id,
+                                  idx,
+                                  'start_month_offset',
+                                  event.target.value
+                                )
+                              }
+                              className="h-7 w-20 text-xs"
+                            />
+                          </label>
+                          <label
+                            className="flex items-center gap-2 text-muted-foreground"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            Duration (mo)
+                            <Input
+                              type="number"
+                              min={0}
+                              placeholder="—"
+                              value={shock.duration_months ?? ""}
+                              onClick={(event) => event.stopPropagation()}
+                              onChange={(event) =>
+                                handleShockTimingChange(
+                                  scenario.id,
+                                  idx,
+                                  'duration_months',
+                                  event.target.value
+                                )
+                              }
+                              className="h-7 w-20 text-xs"
+                            />
+                          </label>
+                        </div>
+                      )
+                    })}
+                    <p className="text-[11px] text-muted-foreground">
+                      Start month uses a zero-based offset (0 = first month).
+                    </p>
                   </div>
                   
                   {/* Impact Summary */}
@@ -347,53 +498,107 @@ export default function ScenariosPage() {
       {selectedScenarioId && baselineRun && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Baseline vs Scenario Comparison</CardTitle>
-            <CardDescription>
-              {scenarios.find(s => s.id === selectedScenarioId)?.name}
-            </CardDescription>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">KPI Matrix (Baseline vs Scenario)</CardTitle>
+                <CardDescription>
+                  {scenarios.find(s => s.id === selectedScenarioId)?.name}
+                </CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Month</span>
+                <Select
+                  value={String(selectedMonthIdx)}
+                  onValueChange={(value) => setSelectedMonthIdx(Number(value))}
+                >
+                  <SelectTrigger size="sm" className="min-w-[140px]">
+                    <SelectValue placeholder="Select month" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {monthOptions.map(option => (
+                      <SelectItem key={option.idx} value={String(option.idx)}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="overflow-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-2 px-3">Month</th>
-                    <th className="text-right py-2 px-3">Baseline Revenue</th>
-                    <th className="text-right py-2 px-3">Scenario Revenue</th>
-                    <th className="text-right py-2 px-3">Delta</th>
-                    <th className="text-right py-2 px-3">Baseline Net Profit</th>
-                    <th className="text-right py-2 px-3">Scenario Net Profit</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {baselineRun.kpi_results.slice(0, 6).map((baseKpi, idx) => {
-                    const scenarioRun = getScenarioResult(selectedScenarioId)
-                    const scenarioKpi = scenarioRun?.kpi_results[idx]
-                    const revenueDelta = scenarioKpi 
-                      ? ((scenarioKpi.total_revenue - baseKpi.total_revenue) / baseKpi.total_revenue) * 100 
-                      : 0
-                    
-                    return (
-                      <tr key={baseKpi.date} className="border-b border-border/50">
-                        <td className="py-2 px-3">
-                          {new Date(baseKpi.date).toLocaleDateString('en-US', { month: 'short' })}
-                        </td>
-                        <td className="text-right py-2 px-3">{formatCurrency(baseKpi.total_revenue)}</td>
-                        <td className="text-right py-2 px-3">
-                          {scenarioKpi ? formatCurrency(scenarioKpi.total_revenue) : '-'}
-                        </td>
-                        <td className={`text-right py-2 px-3 ${revenueDelta < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
-                          {formatDelta(revenueDelta)}
-                        </td>
-                        <td className="text-right py-2 px-3">{formatCurrency(baseKpi.net_profit)}</td>
-                        <td className={`text-right py-2 px-3 ${(scenarioKpi?.net_profit || 0) < 0 ? 'text-rose-500' : ''}`}>
-                          {scenarioKpi ? formatCurrency(scenarioKpi.net_profit) : '-'}
-                        </td>
+              {(() => {
+                const scenarioRun = getScenarioResult(selectedScenarioId)
+                const baseKpi = baselineRun.kpi_results[selectedMonthIdx]
+                const scenarioKpi = scenarioRun?.kpi_results[selectedMonthIdx]
+                const baseDerived = baselineRun.derived_results[selectedMonthIdx]
+                const scenarioDerived = scenarioRun?.derived_results[selectedMonthIdx]
+
+                if (!baseKpi || !scenarioKpi || !baseDerived || !scenarioDerived) {
+                  return (
+                    <p className="text-sm text-muted-foreground">
+                      Select a month to view KPI comparisons.
+                    </p>
+                  )
+                }
+
+                const rows = [
+                  ...KPI_SPINE.map((kpiName) => ({
+                    name: kpiName,
+                    type: 'spine' as const,
+                    baseline: getKpiValue(baseKpi, kpiName),
+                    scenario: getKpiValue(scenarioKpi, kpiName),
+                  })),
+                  ...DERIVED_KPIS.map((kpiName) => ({
+                    name: kpiName,
+                    type: 'derived' as const,
+                    baseline: getDerivedValue(baseDerived, kpiName),
+                    scenario: getDerivedValue(scenarioDerived, kpiName),
+                  })),
+                ]
+
+                return (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-2 px-3">KPI</th>
+                        <th className="text-right py-2 px-3">Baseline</th>
+                        <th className="text-right py-2 px-3">Scenario</th>
+                        <th className="text-right py-2 px-3">
+                          Delta % <span className="text-xs text-muted-foreground">(vs baseline for that month)</span>
+                        </th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {rows.map(row => {
+                        const deltaPct = row.baseline !== 0
+                          ? ((row.scenario - row.baseline) / row.baseline) * 100
+                          : 0
+                        const isNegative = deltaPct < 0
+                        const formatValue = row.type === 'derived' ? formatPercent : formatCurrency
+                        return (
+                          <tr key={row.name} className="border-b border-border/50">
+                            <td className="py-2 px-3">
+                              <span className="font-medium">{formatKpiLabel(row.name)}</span>
+                              {row.type === 'derived' && (
+                                <span className="ml-2 text-[11px] text-muted-foreground">Derived</span>
+                              )}
+                            </td>
+                            <td className="text-right py-2 px-3">{formatValue(row.baseline)}</td>
+                            <td className="text-right py-2 px-3">{formatValue(row.scenario)}</td>
+                            <td className={`text-right py-2 px-3 ${isNegative ? 'text-rose-500' : 'text-emerald-500'}`}>
+                              {formatDelta(deltaPct)}
+                              <div className="text-[10px] text-muted-foreground">
+                                % vs baseline for that month
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )
+              })()}
             </div>
           </CardContent>
         </Card>

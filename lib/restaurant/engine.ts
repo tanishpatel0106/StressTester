@@ -234,6 +234,21 @@ function applyShock(baseValue: number, shock: AssumptionShock): number {
   }
 }
 
+function isShockActiveForMonth(shock: AssumptionShock, monthIdx: number, kpiDate: string): boolean {
+  if (shock.start_date || shock.end_date) {
+    const monthTime = new Date(kpiDate).getTime()
+    const startTime = shock.start_date ? new Date(shock.start_date).getTime() : Number.NEGATIVE_INFINITY
+    const endTime = shock.end_date ? new Date(shock.end_date).getTime() : Number.POSITIVE_INFINITY
+    return monthTime >= startTime && monthTime <= endTime
+  }
+
+  const startOffset = shock.start_month_offset ?? 0
+  if (monthIdx < startOffset) return false
+
+  if (shock.duration_months === undefined) return true
+  return monthIdx < startOffset + shock.duration_months
+}
+
 /**
  * Apply scenario shocks to assumptions and recompute KPIs.
  * Scenarios shock ASSUMPTIONS, not KPIs directly.
@@ -264,7 +279,7 @@ export function applyScenario(
 
       // Check if shock applies to this month
       const shock = scenario.assumption_shocks.find(s => s.assumption_id === assumption.id)
-      if (shock?.duration_months && monthIdx >= shock.duration_months) continue
+      if (shock && !isShockActiveForMonth(shock, monthIdx, kpi.date)) continue
 
       // Calculate the change ratio
       const changeRatio = modValue / assumption.baseline_value
