@@ -213,6 +213,15 @@ export default function MitigationsPage() {
     }
   }
 
+  const getDeltaDisplay = (value: number) => {
+    const isValid = Number.isFinite(value)
+    return {
+      isValid,
+      text: isValid ? formatDelta(value) : "N/A",
+      title: isValid ? undefined : "Baseline value is 0 or undefined.",
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -286,27 +295,63 @@ export default function MitigationsPage() {
               <div className="grid grid-cols-4 gap-4">
                 <div className="text-center p-3 rounded-lg bg-background">
                   <p className="text-xs text-muted-foreground">Scenario Revenue</p>
-                  <p className={`text-lg font-bold ${scenarioRun.summary.total_revenue_change_pct < 0 ? 'text-rose-500' : ''}`}>
-                    {formatDelta(scenarioRun.summary.total_revenue_change_pct)}
-                  </p>
+                  {(() => {
+                    const delta = getDeltaDisplay(scenarioRun.summary.total_revenue_change_pct)
+                    return (
+                      <p
+                        className={`text-lg font-bold ${delta.isValid ? (scenarioRun.summary.total_revenue_change_pct < 0 ? 'text-rose-500' : '') : 'text-muted-foreground'}`}
+                        title={delta.title}
+                      >
+                        {delta.text}
+                      </p>
+                    )
+                  })()}
                 </div>
                 <div className="text-center p-3 rounded-lg bg-background">
                   <p className="text-xs text-muted-foreground">Scenario Net Profit</p>
-                  <p className={`text-lg font-bold ${scenarioRun.summary.net_profit_change_pct < 0 ? 'text-rose-500' : ''}`}>
-                    {formatDelta(scenarioRun.summary.net_profit_change_pct)}
-                  </p>
+                  {(() => {
+                    const delta = getDeltaDisplay(scenarioRun.summary.net_profit_change_pct)
+                    return (
+                      <p
+                        className={`text-lg font-bold ${delta.isValid ? (scenarioRun.summary.net_profit_change_pct < 0 ? 'text-rose-500' : '') : 'text-muted-foreground'}`}
+                        title={delta.title}
+                      >
+                        {delta.text}
+                      </p>
+                    )
+                  })()}
                 </div>
                 <div className="text-center p-3 rounded-lg bg-background">
                   <p className="text-xs text-muted-foreground">Mitigated Revenue</p>
-                  <p className={`text-lg font-bold ${(mitigatedResult?.summary.total_revenue_change_pct || scenarioRun.summary.total_revenue_change_pct) < 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
-                    {mitigatedResult ? formatDelta(mitigatedResult.summary.total_revenue_change_pct) : '-'}
-                  </p>
+                  {mitigatedResult ? (() => {
+                    const delta = getDeltaDisplay(mitigatedResult.summary.total_revenue_change_pct)
+                    return (
+                      <p
+                        className={`text-lg font-bold ${delta.isValid ? (mitigatedResult.summary.total_revenue_change_pct < 0 ? 'text-amber-500' : 'text-emerald-500') : 'text-muted-foreground'}`}
+                        title={delta.title}
+                      >
+                        {delta.text}
+                      </p>
+                    )
+                  })() : (
+                    <p className="text-lg font-bold text-muted-foreground">-</p>
+                  )}
                 </div>
                 <div className="text-center p-3 rounded-lg bg-background">
                   <p className="text-xs text-muted-foreground">Mitigated Net Profit</p>
-                  <p className={`text-lg font-bold ${(mitigatedResult?.summary.net_profit_change_pct || scenarioRun.summary.net_profit_change_pct) < 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
-                    {mitigatedResult ? formatDelta(mitigatedResult.summary.net_profit_change_pct) : '-'}
-                  </p>
+                  {mitigatedResult ? (() => {
+                    const delta = getDeltaDisplay(mitigatedResult.summary.net_profit_change_pct)
+                    return (
+                      <p
+                        className={`text-lg font-bold ${delta.isValid ? (mitigatedResult.summary.net_profit_change_pct < 0 ? 'text-amber-500' : 'text-emerald-500') : 'text-muted-foreground'}`}
+                        title={delta.title}
+                      >
+                        {delta.text}
+                      </p>
+                    )
+                  })() : (
+                    <p className="text-lg font-bold text-muted-foreground">-</p>
+                  )}
                 </div>
               </div>
             )}

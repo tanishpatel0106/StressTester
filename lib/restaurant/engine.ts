@@ -243,6 +243,16 @@ export function applyScenario(
   assumptions: Assumption[],
   scenario: Scenario
 ): KPIDataPoint[] {
+  const getChangeRatio = (baselineValue: number, modifiedValue: number, assumption: Assumption): number => {
+    if (baselineValue <= 0) {
+      console.warn(
+        `[Scenario] Skipping ratio for assumption ${assumption.id} (${assumption.label}) because baseline is <= 0.`
+      )
+      return 1
+    }
+    return modifiedValue / baselineValue
+  }
+
   // Create a map of assumption modifications
   const assumptionMods: Map<string, number> = new Map()
   
@@ -267,7 +277,7 @@ export function applyScenario(
       if (shock?.duration_months && monthIdx >= shock.duration_months) continue
 
       // Calculate the change ratio
-      const changeRatio = modValue / assumption.baseline_value
+      const changeRatio = getChangeRatio(assumption.baseline_value, modValue, assumption)
 
       // Apply based on category (simplified mapping)
       switch (assumption.category) {
@@ -329,6 +339,16 @@ export function applyMitigations(
 
     for (const mitigation of enabledMitigations) {
       for (const mod of mitigation.driver_modifications) {
+        const getReplaceRatio = (currentValue: number, targetValue: number, label: string): number => {
+          if (currentValue <= 0) {
+            console.warn(
+              `[Mitigation] Skipping replace ratio for ${label} because current value is <= 0.`
+            )
+            return 1
+          }
+          return targetValue / currentValue
+        }
+
         // Apply driver modifications based on driver type
         switch (mod.driver) {
           case 'menu_price':
@@ -339,7 +359,7 @@ export function applyMitigations(
               ? 1 + (mod.target_value / 100)
               : mod.modification_type === 'decrease'
               ? 1 - (mod.target_value / 100)
-              : mod.target_value / modifiedKpi.total_revenue
+              : getReplaceRatio(modifiedKpi.total_revenue, mod.target_value, 'revenue')
             modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * revenueChange)
             break
             
@@ -351,7 +371,7 @@ export function applyMitigations(
               ? 1 - (mod.target_value / 100)
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
-              : mod.target_value / modifiedKpi.cost_of_goods_sold
+              : getReplaceRatio(modifiedKpi.cost_of_goods_sold, mod.target_value, 'cost_of_goods_sold')
             modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * cogsChange)
             break
             
@@ -363,7 +383,7 @@ export function applyMitigations(
               ? 1 - (mod.target_value / 100)
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
-              : mod.target_value / modifiedKpi.wage_costs
+              : getReplaceRatio(modifiedKpi.wage_costs, mod.target_value, 'wage_costs')
             modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * wageChange)
             break
             
@@ -375,7 +395,7 @@ export function applyMitigations(
               ? 1 - (mod.target_value / 100)
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
-              : mod.target_value / modifiedKpi.operating_expenses
+              : getReplaceRatio(modifiedKpi.operating_expenses, mod.target_value, 'operating_expenses')
             modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * opexChange)
             break
         }
@@ -427,6 +447,16 @@ export function computeScenario(
   scenario: Scenario,
   baselineRun: ComputationRun
 ): ComputationRun {
+  const safePercentChange = (baseValue: number, newValue: number): number => {
+    if (baseValue === 0) return Number.NaN
+    return ((newValue - baseValue) / baseValue) * 100
+  }
+
+  const safeAverage = (values: number[]): number => {
+    if (values.length === 0) return Number.NaN
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  }
+
   const scenarioKpis = applyScenario(contextPack.kpi_series, assumptions, scenario)
   const derived_results = scenarioKpis.map(computeDerivedKpis)
 
@@ -439,8 +469,12 @@ export function computeScenario(
   const basePrimeCost = baselineRun.kpi_results.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
   const scenarioPrimeCost = scenarioKpis.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
   
-  const baseGrossMargin = baselineRun.derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / baselineRun.derived_results.length
-  const scenarioGrossMargin = derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / derived_results.length
+  const baseGrossMargin = safeAverage(baselineRun.derived_results.map(d => d.gross_margin_pct))
+  const scenarioGrossMargin = safeAverage(derived_results.map(d => d.gross_margin_pct))
+  const netProfitDelta = scenarioNetProfit - baseNetProfit
+  const netProfitChangePct = baseTotal !== 0
+    ? (netProfitDelta / baseTotal) * 100
+    : Number.NaN
 
   return {
     id: `CR_scenario_${scenario.id}_${Date.now()}`,
@@ -451,10 +485,12 @@ export function computeScenario(
     kpi_results: scenarioKpis,
     derived_results,
     summary: {
-      total_revenue_change_pct: ((scenarioTotal - baseTotal) / baseTotal) * 100,
-      net_profit_change_pct: baseNetProfit !== 0 ? ((scenarioNetProfit - baseNetProfit) / Math.abs(baseNetProfit)) * 100 : 0,
-      prime_cost_change_pct: ((scenarioPrimeCost - basePrimeCost) / basePrimeCost) * 100,
-      gross_margin_change_pct: scenarioGrossMargin - baseGrossMargin,
+      total_revenue_change_pct: safePercentChange(baseTotal, scenarioTotal),
+      net_profit_change_pct: netProfitChangePct,
+      prime_cost_change_pct: safePercentChange(basePrimeCost, scenarioPrimeCost),
+      gross_margin_change_pct: Number.isFinite(baseGrossMargin) && Number.isFinite(scenarioGrossMargin)
+        ? scenarioGrossMargin - baseGrossMargin
+        : Number.NaN,
     },
     computed_at: new Date().toISOString(),
   }
@@ -471,6 +507,16 @@ export function computeMitigated(
   baselineRun: ComputationRun,
   scenarioRun: ComputationRun
 ): ComputationRun {
+  const safePercentChange = (baseValue: number, newValue: number): number => {
+    if (baseValue === 0) return Number.NaN
+    return ((newValue - baseValue) / baseValue) * 100
+  }
+
+  const safeAverage = (values: number[]): number => {
+    if (values.length === 0) return Number.NaN
+    return values.reduce((sum, value) => sum + value, 0) / values.length
+  }
+
   const mitigatedKpis = applyMitigations(scenarioRun.kpi_results, mitigations)
   const derived_results = mitigatedKpis.map(computeDerivedKpis)
 
@@ -483,8 +529,12 @@ export function computeMitigated(
   const basePrimeCost = baselineRun.kpi_results.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
   const mitigatedPrimeCost = mitigatedKpis.reduce((sum, k) => sum + k.cost_of_goods_sold + k.wage_costs, 0)
   
-  const baseGrossMargin = baselineRun.derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / baselineRun.derived_results.length
-  const mitigatedGrossMargin = derived_results.reduce((sum, d) => sum + d.gross_margin_pct, 0) / derived_results.length
+  const baseGrossMargin = safeAverage(baselineRun.derived_results.map(d => d.gross_margin_pct))
+  const mitigatedGrossMargin = safeAverage(derived_results.map(d => d.gross_margin_pct))
+  const netProfitDelta = mitigatedNetProfit - baseNetProfit
+  const netProfitChangePct = baseTotal !== 0
+    ? (netProfitDelta / baseTotal) * 100
+    : Number.NaN
 
   return {
     id: `CR_mitigated_${scenario.id}_${Date.now()}`,
@@ -496,10 +546,12 @@ export function computeMitigated(
     kpi_results: mitigatedKpis,
     derived_results,
     summary: {
-      total_revenue_change_pct: ((mitigatedTotal - baseTotal) / baseTotal) * 100,
-      net_profit_change_pct: baseNetProfit !== 0 ? ((mitigatedNetProfit - baseNetProfit) / Math.abs(baseNetProfit)) * 100 : 0,
-      prime_cost_change_pct: ((mitigatedPrimeCost - basePrimeCost) / basePrimeCost) * 100,
-      gross_margin_change_pct: mitigatedGrossMargin - baseGrossMargin,
+      total_revenue_change_pct: safePercentChange(baseTotal, mitigatedTotal),
+      net_profit_change_pct: netProfitChangePct,
+      prime_cost_change_pct: safePercentChange(basePrimeCost, mitigatedPrimeCost),
+      gross_margin_change_pct: Number.isFinite(baseGrossMargin) && Number.isFinite(mitigatedGrossMargin)
+        ? mitigatedGrossMargin - baseGrossMargin
+        : Number.NaN,
     },
     computed_at: new Date().toISOString(),
   }
@@ -523,6 +575,9 @@ export function formatPercent(value: number): string {
 }
 
 export function formatDelta(value: number): string {
+  if (!Number.isFinite(value)) {
+    return 'N/A'
+  }
   const sign = value >= 0 ? '+' : ''
   return `${sign}${value.toFixed(1)}%`
 }
