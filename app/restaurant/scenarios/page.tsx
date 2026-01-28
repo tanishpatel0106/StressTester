@@ -698,7 +698,7 @@ export default function ScenariosPage() {
           if (!open) setChartScenarioId(null)
         }}
       >
-        <DialogContent className="max-h-[85vh] max-w-[85vw] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] max-w-[95vw] overflow-y-auto">
           {(() => {
             if (!chartScenarioId || !baselineRun) {
               return (
@@ -770,6 +770,14 @@ export default function ScenariosPage() {
                                 />
                                 <Line
                                   type="monotone"
+                                  dataKey="baseline"
+                                  stroke="#2563eb"
+                                  strokeWidth={2}
+                                  dot={false}
+                                  name="Baseline"
+                                />
+                                <Line
+                                  type="monotone"
                                   dataKey="scenario"
                                   stroke="#f97316"
                                   strokeWidth={2}
@@ -819,6 +827,14 @@ export default function ScenariosPage() {
                                   stroke="#16a34a"
                                   fill="#bbf7d0"
                                   fillOpacity={0.25}
+                                  strokeWidth={2}
+                                  dot={false}
+                                  name="Baseline"
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="baseline"
+                                  stroke="#16a34a"
                                   strokeWidth={2}
                                   dot={false}
                                   name="Baseline"
