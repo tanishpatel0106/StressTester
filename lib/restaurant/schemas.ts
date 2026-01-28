@@ -243,7 +243,7 @@ export const AIScenarioOutputSchema = z.object({
     assumption_id: z.string(),
     shock_type: z.string(),
     shock_value: z.number(),
-    duration_months: z.number().optional(),
+    duration_months: z.number().nullable(),
   })),
   trigger_conditions: z.array(z.string()),
   expected_impact: z.string(),

@@ -90,7 +90,7 @@ Each scenario should have:
   - assumption_id (must match an assumption ID like A1, A2)
   - shock_type (multiply, add, or set)
   - shock_value (the multiplier, addend, or absolute value)
-  - duration_months (optional)
+  - duration_months (use null if not applicable)
 `
 
 const MITIGATIONS_PROMPT = (scenario: Scenario, assumptions: Assumption[]) => `
@@ -197,6 +197,7 @@ export async function generateScenarios(
         assumption_shocks: validShocks.map(shock => ({
           ...shock,
           shock_type: normalizeShockType(shock.shock_type),
+          duration_months: shock.duration_months ?? undefined,
         })),
         severity: normalizeSeverity(s.severity),
         probability: Math.max(0, Math.min(1, s.probability)),
