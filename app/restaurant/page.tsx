@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import * as XLSX from "xlsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -55,14 +54,6 @@ export default function RestaurantUploadPage() {
       reader.readAsText(file)
     })
 
-  const readFileAsArrayBuffer = (file: File) =>
-    new Promise<ArrayBuffer>((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(reader.result as ArrayBuffer)
-      reader.onerror = () => reject(reader.error)
-      reader.readAsArrayBuffer(file)
-    })
-
   const buildTabularEvidence = (fileName: string, rows: Array<Array<string | number>>) => {
     if (rows.length === 0) return []
     const headers = rows[0].map((header, index) =>
@@ -90,23 +81,10 @@ export default function RestaurantUploadPage() {
     const extension = file.name.split(".").pop()?.toLowerCase()
     if (extension === "csv") {
       const text = await readFileAsText(file)
-      const workbook = XLSX.read(text, { type: "string" })
-      const sheet = workbook.Sheets[workbook.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json<Array<string | number>>(sheet, {
-        header: 1,
-        defval: "",
-      })
-      return buildTabularEvidence(file.name, rows)
-    }
-
-    if (extension === "xlsx" || extension === "xls") {
-      const buffer = await readFileAsArrayBuffer(file)
-      const workbook = XLSX.read(buffer, { type: "array" })
-      const sheet = workbook.Sheets[workbook.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json<Array<string | number>>(sheet, {
-        header: 1,
-        defval: "",
-      })
+      const rows = text
+        .split(/\r?\n/)
+        .map((line) => line.split(",").map((value) => value.trim()))
+        .filter((row) => row.some((value) => value !== ""))
       return buildTabularEvidence(file.name, rows)
     }
 
@@ -282,7 +260,7 @@ export default function RestaurantUploadPage() {
               <Input
                 id="additional-uploads"
                 type="file"
-                accept=".md,.txt,.csv,.xlsx,.xls"
+                accept=".md,.txt,.csv"
                 multiple
                 onChange={async (e) => {
                   const files = Array.from(e.target.files || [])
