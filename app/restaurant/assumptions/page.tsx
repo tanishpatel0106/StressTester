@@ -382,7 +382,7 @@ export default function AssumptionsPage() {
                       <Badge variant="secondary" className="text-xs">
                         {assumption.category}
                       </Badge>
-                      {assumption.evidence_refs.slice(0, 4).map(ref => {
+                      {assumption.evidence_refs.slice(0, 2).map(ref => {
                         const location = getEvidenceLocation(ref)
                         const anchor = getEvidenceAnchor(ref)
                         return (
