@@ -365,7 +365,12 @@ function formatEvidenceCatalog(evidenceRegistry: EvidenceCatalogEntry[]) {
     return '- None available'
   }
 
-  return evidenceRegistry.slice(0, 40).map(evidence => {
+  const prioritizedEvidence = [
+    ...evidenceRegistry.filter(evidence => evidence.type === 'user_input'),
+    ...evidenceRegistry.filter(evidence => evidence.type !== 'user_input'),
+  ]
+
+  return prioritizedEvidence.slice(0, 40).map(evidence => {
     const location = [
       evidence.row != null ? `row ${evidence.row}` : null,
       evidence.column ? `column ${evidence.column}` : null,
