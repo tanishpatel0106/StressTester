@@ -2,14 +2,19 @@
 
 import { NextResponse } from "next/server"
 import { getSession, updateSession } from "@/lib/restaurant/storage"
-import { 
-  extractAssumptions, 
-  generateScenarios, 
+import {
+  extractAssumptions,
+  generateScenarios,
   generateMitigations,
-  generateExecutiveSummary 
-} from "@/lib/restaurant/ai-client"
-import { runScenario, computeBaselineKPIs } from "@/lib/restaurant/engine"
-import type { Assumption, Scenario, Mitigation } from "@/lib/restaurant/types"
+  generateExecutiveSummary,
+  runScenario,
+  computeBaselineKPIs,
+} from "@/lib/restaurant/legacy-analysis"
+import type {
+  AnalysisAssumption,
+  AnalysisScenario,
+  AnalysisMitigation,
+} from "@/lib/restaurant/types"
 
 export async function POST(request: Request) {
   const { searchParams } = new URL(request.url)
@@ -53,7 +58,7 @@ export async function POST(request: Request) {
         }
 
         const scenarios = await generateScenarios(
-          session.assumptions,
+          session.assumptions as AnalysisAssumption[],
           session.baselineKPIs!
         )
 
@@ -74,7 +79,7 @@ export async function POST(request: Request) {
           const result = runScenario(
             session.rawData!,
             session.baselineKPIs!,
-            session.assumptions!,
+            session.assumptions as AnalysisAssumption[],
             scenario
           )
           return {
@@ -97,15 +102,15 @@ export async function POST(request: Request) {
         }
 
         // Find breaking scenarios
-        const breakingScenarios = session.scenarios!.filter((s, idx) => 
+        const breakingScenarios = session.scenarios!.filter((s, idx) =>
           session.scenarioResults![idx].breaks
         )
 
-        const mitigations: Mitigation[] = []
+        const mitigations: AnalysisMitigation[] = []
         for (const scenario of breakingScenarios) {
           const mitigation = await generateMitigations(
             scenario,
-            session.assumptions!,
+            session.assumptions as AnalysisAssumption[],
             session.baselineKPIs!
           )
           mitigations.push(mitigation)
@@ -125,9 +130,9 @@ export async function POST(request: Request) {
         }
 
         const summary = await generateExecutiveSummary(
-          session.assumptions!,
-          session.scenarios!,
-          session.scenarioResults,
+          session.assumptions as AnalysisAssumption[],
+          session.scenarios as AnalysisScenario[],
+          session.scenarioResults || [],
           session.baselineKPIs!
         )
 
