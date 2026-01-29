@@ -698,7 +698,7 @@ export default function ScenariosPage() {
           if (!open) setChartScenarioId(null)
         }}
       >
-        <DialogContent className="max-h-[90vh] max-w-[95vw] overflow-y-auto">
+        <DialogContent className="w-[90vw] h-[90vh] max-w-none sm:max-w-none overflow-y-auto">
           {(() => {
             if (!chartScenarioId || !baselineRun) {
               return (
