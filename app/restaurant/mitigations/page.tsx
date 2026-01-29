@@ -554,6 +554,69 @@ export default function MitigationsPage() {
     }))
   }, [baselineRun, bundleRuns, scenarioRun, storedBundleRuns, storedMitigatedRun])
 
+  const computeRunFeatures = (run: typeof baselineRun | null) => {
+    if (!run) {
+      return {
+        revenueTrend: 0,
+        netMarginVolatility: 0,
+        avgNetMargin: 0,
+        primeCostPctAvg: 0,
+      }
+    }
+
+    const netMargins = run.derived_results.map(point => point.net_margin)
+    const primeCostPcts = run.derived_results.map(point => point.prime_cost_pct)
+    const revenues = run.kpi_results.map(point => point.total_revenue)
+
+    const avg = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0)
+    const variance = (values: number[]) => {
+      const mean = avg(values)
+      return avg(values.map(value => (value - mean) ** 2))
+    }
+
+    const revenueTrend = revenues.length > 1
+      ? (revenues[revenues.length - 1] - revenues[0]) / Math.max(revenues[0], 1)
+      : 0
+
+    return {
+      revenueTrend,
+      netMarginVolatility: Math.sqrt(variance(netMargins)),
+      avgNetMargin: avg(netMargins),
+      primeCostPctAvg: avg(primeCostPcts),
+    }
+  }
+
+  const coxCoefficients = {
+    revenueTrend: -0.8,
+    netMarginVolatility: 1.2,
+    avgNetMargin: -1.5,
+    primeCostPctAvg: 1.1,
+  }
+
+  const computeRiskScore = (run: typeof baselineRun | null) => {
+    const features = computeRunFeatures(run)
+    const score = Object.entries(coxCoefficients).reduce((total, [key, weight]) => {
+      return total + features[key as keyof typeof features] * weight
+    }, 0)
+    return { score, features }
+  }
+
+  const riskScores = useMemo(() => {
+    const baselineScore = computeRiskScore(baselineRun)
+    const scenarioScore = computeRiskScore(scenarioRun)
+    const bundleScores = BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const run = bundleRuns[bundleId] || storedBundleRuns[bundleId] || storedMitigatedRun
+      acc[bundleId] = computeRiskScore(run)
+      return acc
+    }, {} as Record<"A" | "B" | "C", ReturnType<typeof computeRiskScore>>)
+
+    return {
+      baseline: baselineScore,
+      scenario: scenarioScore,
+      bundles: bundleScores,
+    }
+  }, [baselineRun, bundleRuns, scenarioRun, storedBundleRuns, storedMitigatedRun])
+
   const getComparisonValues = (baselineValue: number, scenarioValue: number, mitigatedValue?: number) => {
     if (comparisonMode === "baseline-scenario") {
       return { reference: baselineValue, comparison: scenarioValue }
@@ -957,6 +1020,98 @@ export default function MitigationsPage() {
                 <Line type="stepAfter" dataKey="bundleC" name="Bundle C" stroke="#14b8a6" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {baselineRun && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cox-Style Risk Scoring</CardTitle>
+            <CardDescription>
+              Feature-based risk scores derived from revenue trend, margin volatility, and cost mix.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-lg border border-border/60 p-4">
+                <p className="text-sm font-semibold">Feature Weights (β)</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Higher scores indicate higher hazard risk (relative comparison).
+                </p>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Revenue trend</span>
+                    <span className="font-mono">{coxCoefficients.revenueTrend.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Net margin volatility</span>
+                    <span className="font-mono">{coxCoefficients.netMarginVolatility.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Average net margin</span>
+                    <span className="font-mono">{coxCoefficients.avgNetMargin.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Prime cost % avg</span>
+                    <span className="font-mono">{coxCoefficients.primeCostPctAvg.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border/60 p-4">
+                <p className="text-sm font-semibold">Risk Score Comparison</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Baseline vs stressed vs bundle outcomes.
+                </p>
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Baseline</span>
+                    <span className="font-medium">{riskScores.baseline.score.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Stressed</span>
+                    <span className="font-medium">{riskScores.scenario.score.toFixed(2)}</span>
+                  </div>
+                  {BUNDLE_OPTIONS.map(bundleId => (
+                    <div key={bundleId} className="flex items-center justify-between">
+                      <span>Bundle {bundleId}</span>
+                      <span className="font-medium">{riskScores.bundles[bundleId].score.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">Feature</th>
+                    <th className="py-2 pr-4">Baseline</th>
+                    <th className="py-2 pr-4">Stressed</th>
+                    <th className="py-2 pr-4">Bundle A</th>
+                    <th className="py-2 pr-4">Bundle B</th>
+                    <th className="py-2 pr-4">Bundle C</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { key: "revenueTrend", label: "Revenue trend" },
+                    { key: "netMarginVolatility", label: "Net margin volatility" },
+                    { key: "avgNetMargin", label: "Average net margin" },
+                    { key: "primeCostPctAvg", label: "Prime cost % avg" },
+                  ].map(feature => (
+                    <tr key={feature.key} className="border-b border-border/50">
+                      <td className="py-3 pr-4 font-medium">{feature.label}</td>
+                      <td className="py-3 pr-4">{riskScores.baseline.features[feature.key as keyof typeof riskScores.baseline.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.scenario.features[feature.key as keyof typeof riskScores.scenario.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.bundles.A.features[feature.key as keyof typeof riskScores.bundles.A.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.bundles.B.features[feature.key as keyof typeof riskScores.bundles.B.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.bundles.C.features[feature.key as keyof typeof riskScores.bundles.C.features].toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </CardContent>
         </Card>
       )}
