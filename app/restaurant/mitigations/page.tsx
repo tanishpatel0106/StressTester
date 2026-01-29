@@ -29,7 +29,7 @@ import {
   getComputationRuns,
 } from "@/lib/restaurant/storage"
 import { generateMitigations } from "@/lib/restaurant/ai-client"
-import { computeMitigated, formatCurrency, formatDelta, formatPercent } from "@/lib/restaurant/engine"
+import { computeMitigated, formatCurrency, formatDelta, formatPercent, runMitigationMonteCarlo } from "@/lib/restaurant/engine"
 import type { Mitigation, MitigationSet, KPIName, DerivedKPIName } from "@/lib/restaurant/types"
 import {
   LineChart,
@@ -40,6 +40,9 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ScatterChart,
+  Scatter,
+  ZAxis,
 } from "recharts"
 
 const BUNDLE_OPTIONS = ["A", "B", "C"] as const
@@ -394,6 +397,22 @@ export default function MitigationsPage() {
   const scenarioMitigations = mitigations.filter(m => m.scenario_id === selectedScenarioId)
   const activeMitigatedRun = mitigatedResult || activeBundleRun
 
+  const costBenefitData = useMemo(() => {
+    return scenarioMitigations.map(mitigation => {
+      const totalCost = mitigation.driver_modifications.reduce((sum, mod) => sum + mod.implementation_cost, 0)
+      const improvement = mitigation.expected_impact.net_profit_change
+      const roi = totalCost > 0 ? improvement / totalCost : 0
+      return {
+        id: mitigation.id,
+        name: mitigation.name,
+        category: mitigation.category.replace('_', ' '),
+        cost: totalCost,
+        improvement,
+        roi,
+      }
+    })
+  }, [scenarioMitigations])
+
   const alignedSeries = useMemo(() => {
     if (!baselineRun || !scenarioRun) return null
     return baselineRun.kpi_results.map((baselineKpi, idx) => {
@@ -639,6 +658,33 @@ export default function MitigationsPage() {
       bundles: bundleScores,
     }
   }, [baselineRun, bundleRuns, scenarioRun, storedBundleRuns, storedMitigatedRun])
+
+  const monteCarloStats = useMemo(() => {
+    if (!contextPack || !baselineRun || !scenarioRun || !selectedScenarioId) return null
+    const scenario = scenarioSet?.scenarios.find(item => item.id === selectedScenarioId)
+    if (!scenario) return null
+    const mitigationsForBundle = bundleMitigations[activeBundle]?.filter(m => m.enabled) || []
+    if (mitigationsForBundle.length === 0) return null
+    return runMitigationMonteCarlo({
+      contextPack,
+      assumptions: assumptionSet?.assumptions || [],
+      scenario,
+      mitigations: mitigationsForBundle,
+      baselineRun,
+      scenarioRun,
+      iterations: 200,
+      volatility: 0.2,
+    })
+  }, [
+    activeBundle,
+    assumptionSet?.assumptions,
+    baselineRun,
+    bundleMitigations,
+    contextPack,
+    scenarioRun,
+    scenarioSet?.scenarios,
+    selectedScenarioId,
+  ])
 
   const getComparisonValues = (baselineValue: number, scenarioValue: number, mitigatedValue?: number) => {
     if (comparisonMode === "baseline-scenario") {
@@ -919,6 +965,102 @@ export default function MitigationsPage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {costBenefitData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cost-Benefit Frontier</CardTitle>
+            <CardDescription>
+              Compare mitigation implementation cost vs expected net profit impact. Higher ROI is better.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-6 lg:grid-cols-2">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="cost" name="Cost" tickFormatter={value => formatCurrency(value)} />
+                  <YAxis dataKey="improvement" name="Net profit impact" tickFormatter={value => formatDelta(value)} />
+                  <ZAxis dataKey="roi" range={[60, 200]} name="ROI" />
+                  <Tooltip
+                    formatter={(value: number, name: string) => {
+                      if (name === "Cost") return formatCurrency(value)
+                      if (name === "Net profit impact") return formatDelta(value)
+                      if (name === "ROI") return value.toFixed(2)
+                      return value
+                    }}
+                  />
+                  <Scatter data={costBenefitData} fill="#2563eb" name="Mitigations" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">Mitigation</th>
+                    <th className="py-2 pr-4">Cost</th>
+                    <th className="py-2 pr-4">Net Profit Δ</th>
+                    <th className="py-2 pr-4">ROI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {costBenefitData.map(item => (
+                    <tr key={item.id} className="border-b border-border/50">
+                      <td className="py-3 pr-4">
+                        <div className="font-medium text-foreground">{item.name}</div>
+                        <div className="text-xs text-muted-foreground">{item.category}</div>
+                      </td>
+                      <td className="py-3 pr-4">{formatCurrency(item.cost)}</td>
+                      <td className="py-3 pr-4">{formatDelta(item.improvement)}</td>
+                      <td className="py-3 pr-4">{item.roi.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {monteCarloStats && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Monte Carlo Outcomes</CardTitle>
+            <CardDescription>
+              Distribution of outcomes from probabilistic mitigation sampling for Bundle {activeBundle}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">Metric</th>
+                    <th className="py-2 pr-4">P10</th>
+                    <th className="py-2 pr-4">P50</th>
+                    <th className="py-2 pr-4">P90</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: "Revenue Δ", stats: monteCarloStats.total_revenue_change_pct },
+                    { label: "Net Profit Δ", stats: monteCarloStats.net_profit_change_pct },
+                    { label: "Prime Cost Δ", stats: monteCarloStats.prime_cost_change_pct },
+                  ].map(row => (
+                    <tr key={row.label} className="border-b border-border/50">
+                      <td className="py-3 pr-4 font-medium">{row.label}</td>
+                      <td className="py-3 pr-4">{formatDelta(row.stats.p10)}</td>
+                      <td className="py-3 pr-4">{formatDelta(row.stats.p50)}</td>
+                      <td className="py-3 pr-4">{formatDelta(row.stats.p90)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </CardContent>
         </Card>

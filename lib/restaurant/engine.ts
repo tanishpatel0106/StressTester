@@ -15,6 +15,7 @@ import type {
   CSVRow,
   CSVParseResult,
   DerivedKPIName,
+  ShockCurveType,
 } from "./types"
 import { buildShockCurve } from "./forecasting"
 
@@ -411,6 +412,45 @@ export function applyMitigations(
     return scenarioKpis
   }
 
+  const avg = (values: number[]) => (values.length === 0 ? 0 : values.reduce((sum, value) => sum + value, 0) / values.length)
+  const variance = (values: number[]) => {
+    const mean = avg(values)
+    return avg(values.map(value => (value - mean) ** 2))
+  }
+  const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+  const elasticityFactors = (() => {
+    const revenues = scenarioKpis.map(kpi => kpi.total_revenue)
+    const cogs = scenarioKpis.map(kpi => kpi.cost_of_goods_sold)
+    const wages = scenarioKpis.map(kpi => kpi.wage_costs)
+    const opex = scenarioKpis.map(kpi => kpi.operating_expenses)
+
+    const revenueVolatility = Math.sqrt(variance(revenues)) / Math.max(avg(revenues), 1)
+    const cogsVolatility = Math.sqrt(variance(cogs)) / Math.max(avg(cogs), 1)
+    const wageVolatility = Math.sqrt(variance(wages)) / Math.max(avg(wages), 1)
+    const opexVolatility = Math.sqrt(variance(opex)) / Math.max(avg(opex), 1)
+
+    return {
+      revenue: clamp(1 + revenueVolatility, 0.7, 1.5),
+      cogs: clamp(1 + cogsVolatility, 0.7, 1.5),
+      wages: clamp(1 + wageVolatility, 0.7, 1.5),
+      opex: clamp(1 + opexVolatility, 0.7, 1.5),
+    }
+  })()
+
+  const mitigationCurves = enabledMitigations.reduce((acc, mitigation) => {
+    const curveType: ShockCurveType = mitigation.category === 'revenue'
+      ? 'recovery'
+      : mitigation.category === 'cost_reduction'
+      ? 'decay'
+      : 'recovery'
+    acc[mitigation.id] = buildShockCurve({
+      curve: curveType,
+      horizonMonths: scenarioKpis.length,
+      kpiSeries: scenarioKpis,
+    }).values
+    return acc
+  }, {} as Record<string, number[]>)
+
   const applyBlend = (ratio: number, monthIdx: number) => {
     if (!mitigationBlend) return ratio
     if (monthIdx < mitigationBlend.startIndex || monthIdx > mitigationBlend.endIndex) return ratio
@@ -423,6 +463,7 @@ export function applyMitigations(
     let modifiedKpi = { ...kpi }
 
     for (const mitigation of enabledMitigations) {
+      const curveValue = mitigationCurves[mitigation.id]?.[monthIdx] ?? 1
       for (const mod of mitigation.driver_modifications) {
         // Apply driver modifications based on driver type
         switch (mod.driver) {
@@ -435,7 +476,9 @@ export function applyMitigations(
               : mod.modification_type === 'decrease'
               ? 1 - (mod.target_value / 100)
               : mod.target_value / modifiedKpi.total_revenue
-            modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * applyBlend(revenueChange, monthIdx))
+            const adjustedRevenueChange = 1 + (revenueChange - 1) * elasticityFactors.revenue
+            const revenueRatio = 1 + (adjustedRevenueChange - 1) * curveValue
+            modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * applyBlend(revenueRatio, monthIdx))
             break
             
           case 'food_cost':
@@ -447,7 +490,9 @@ export function applyMitigations(
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
               : mod.target_value / modifiedKpi.cost_of_goods_sold
-            modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * applyBlend(cogsChange, monthIdx))
+            const adjustedCogsChange = 1 + (cogsChange - 1) * elasticityFactors.cogs
+            const cogsRatio = 1 + (adjustedCogsChange - 1) * curveValue
+            modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * applyBlend(cogsRatio, monthIdx))
             break
             
           case 'labor_hours':
@@ -459,7 +504,9 @@ export function applyMitigations(
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
               : mod.target_value / modifiedKpi.wage_costs
-            modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * applyBlend(wageChange, monthIdx))
+            const adjustedWageChange = 1 + (wageChange - 1) * elasticityFactors.wages
+            const wageRatio = 1 + (adjustedWageChange - 1) * curveValue
+            modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * applyBlend(wageRatio, monthIdx))
             break
             
           case 'rent':
@@ -471,7 +518,9 @@ export function applyMitigations(
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
               : mod.target_value / modifiedKpi.operating_expenses
-            modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * applyBlend(opexChange, monthIdx))
+            const adjustedOpexChange = 1 + (opexChange - 1) * elasticityFactors.opex
+            const opexRatio = 1 + (adjustedOpexChange - 1) * curveValue
+            modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * applyBlend(opexRatio, monthIdx))
             break
         }
       }
@@ -668,6 +717,92 @@ export function computeMitigated(
       gross_margin_change_pct: mitigatedGrossMargin - baseGrossMargin,
     },
     computed_at: new Date().toISOString(),
+  }
+}
+
+// =============================================================================
+// MONTE CARLO SIMULATION
+// =============================================================================
+
+export function runMitigationMonteCarlo({
+  contextPack,
+  assumptions,
+  scenario,
+  mitigations,
+  baselineRun,
+  scenarioRun,
+  iterations = 200,
+  volatility = 0.2,
+}: {
+  contextPack: ContextPack
+  assumptions: Assumption[]
+  scenario: Scenario
+  mitigations: Mitigation[]
+  baselineRun: ComputationRun
+  scenarioRun: ComputationRun
+  iterations?: number
+  volatility?: number
+}): {
+  total_revenue_change_pct: { p10: number; p50: number; p90: number }
+  net_profit_change_pct: { p10: number; p50: number; p90: number }
+  prime_cost_change_pct: { p10: number; p50: number; p90: number }
+} {
+  const randomNormal = () => {
+    let u = 0
+    let v = 0
+    while (u === 0) u = Math.random()
+    while (v === 0) v = Math.random()
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v)
+  }
+
+  const applyRandomness = (value: number) => value * (1 + randomNormal() * volatility)
+
+  const results = Array.from({ length: iterations }, () => {
+    const randomizedMitigations = mitigations.map(mitigation => ({
+      ...mitigation,
+      driver_modifications: mitigation.driver_modifications.map(mod => ({
+        ...mod,
+        target_value: Math.max(0, applyRandomness(mod.target_value)),
+      })),
+    }))
+
+    return computeMitigated(
+      contextPack,
+      assumptions,
+      scenario,
+      randomizedMitigations,
+      baselineRun,
+      scenarioRun
+    ).summary
+  })
+
+  const percentile = (values: number[], p: number) => {
+    const sorted = [...values].sort((a, b) => a - b)
+    if (sorted.length === 0) return 0
+    const idx = Math.min(sorted.length - 1, Math.max(0, Math.round((p / 100) * (sorted.length - 1))))
+    return sorted[idx]
+  }
+
+  const revenueChanges = results.map(result => result.total_revenue_change_pct)
+  const profitChanges = results.map(result => result.net_profit_change_pct)
+  const primeCostChanges = results.map(result => result.prime_cost_change_pct)
+
+  return {
+    total_revenue_change_pct: {
+      p10: percentile(revenueChanges, 10),
+      p50: percentile(revenueChanges, 50),
+      p90: percentile(revenueChanges, 90),
+    },
+    net_profit_change_pct: {
+      p10: percentile(profitChanges, 10),
+      p50: percentile(profitChanges, 50),
+      p90: percentile(profitChanges, 90),
+    },
+    prime_cost_change_pct: {
+      p10: percentile(primeCostChanges, 10),
+      p50: percentile(primeCostChanges, 50),
+      p90: percentile(primeCostChanges, 90),
+    },
   }
 }
 
