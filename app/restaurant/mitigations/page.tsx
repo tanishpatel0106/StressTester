@@ -43,6 +43,28 @@ import {
 } from "recharts"
 
 const BUNDLE_OPTIONS = ["A", "B", "C"] as const
+const DRIVER_SLIDER_BOUNDS: Record<
+  string,
+  {
+    min: number
+    max: number
+    step: number
+  }
+> = {
+  menu_price: { min: 0, max: 25, step: 0.5 },
+  average_check: { min: 0, max: 25, step: 0.5 },
+  covers: { min: 0, max: 25, step: 0.5 },
+  food_cost: { min: 0, max: 20, step: 0.5 },
+  supplier_cost: { min: 0, max: 20, step: 0.5 },
+  portion_size: { min: 0, max: 20, step: 0.5 },
+  labor_hours: { min: 0, max: 25, step: 0.5 },
+  hourly_rate: { min: 0, max: 25, step: 0.5 },
+  staff_count: { min: 0, max: 25, step: 0.5 },
+  rent: { min: 0, max: 15, step: 0.5 },
+  utilities: { min: 0, max: 15, step: 0.5 },
+  marketing: { min: 0, max: 15, step: 0.5 },
+  default: { min: 0, max: 25, step: 0.5 },
+}
 
 export default function MitigationsPage() {
   const searchParams = useSearchParams()
@@ -381,6 +403,7 @@ export default function MitigationsPage() {
       const mitigatedKpi = activeMitigatedRun?.kpi_results[idx] || scenarioKpi
       const mitigatedDerived = activeMitigatedRun?.derived_results[idx] || scenarioDerived
       return {
+        index: idx,
         date: baselineKpi.date,
         baselineKpi,
         scenarioKpi,
@@ -445,6 +468,14 @@ export default function MitigationsPage() {
 
       const primeCost = (kpi: typeof point.baselineKpi) => kpi.cost_of_goods_sold + kpi.wage_costs
       const applyDiff = (value: number, referenceValue: number) => (diffMode ? value - referenceValue : value)
+      const getBundleKpi = (bundleId: "A" | "B" | "C") => {
+        const run = bundleRuns[bundleId] || storedBundleRuns[bundleId]
+        return run?.kpi_results[point.index] || point.mitigatedKpi
+      }
+      const getBundleDerived = (bundleId: "A" | "B" | "C") => {
+        const run = bundleRuns[bundleId] || storedBundleRuns[bundleId]
+        return run?.derived_results[point.index] || point.mitigatedDerived
+      }
 
       return {
         date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
@@ -460,9 +491,21 @@ export default function MitigationsPage() {
         baselineGrossMargin: applyDiff(point.baselineDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
         scenarioGrossMargin: applyDiff(point.scenarioDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
         mitigatedGrossMargin: applyDiff(point.mitigatedDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
+        bundleARevenue: applyDiff(getBundleKpi("A").total_revenue, referenceKpi.total_revenue),
+        bundleBRevenue: applyDiff(getBundleKpi("B").total_revenue, referenceKpi.total_revenue),
+        bundleCRevenue: applyDiff(getBundleKpi("C").total_revenue, referenceKpi.total_revenue),
+        bundleANetProfit: applyDiff(getBundleKpi("A").net_profit, referenceKpi.net_profit),
+        bundleBNetProfit: applyDiff(getBundleKpi("B").net_profit, referenceKpi.net_profit),
+        bundleCNetProfit: applyDiff(getBundleKpi("C").net_profit, referenceKpi.net_profit),
+        bundleAPrimeCost: applyDiff(primeCost(getBundleKpi("A")), primeCost(referenceKpi)),
+        bundleBPrimeCost: applyDiff(primeCost(getBundleKpi("B")), primeCost(referenceKpi)),
+        bundleCPrimeCost: applyDiff(primeCost(getBundleKpi("C")), primeCost(referenceKpi)),
+        bundleAGrossMargin: applyDiff(getBundleDerived("A").gross_margin_pct, referenceDerived.gross_margin_pct),
+        bundleBGrossMargin: applyDiff(getBundleDerived("B").gross_margin_pct, referenceDerived.gross_margin_pct),
+        bundleCGrossMargin: applyDiff(getBundleDerived("C").gross_margin_pct, referenceDerived.gross_margin_pct),
       }
     })
-  }, [alignedSeries, diffMode, diffReference])
+  }, [alignedSeries, bundleRuns, diffMode, diffReference, storedBundleRuns])
 
   const diffLabel = diffReference === "baseline"
     ? "Baseline"
@@ -498,20 +541,14 @@ export default function MitigationsPage() {
     return selection.includes(mitigationId)
   }
 
-  const getModificationRange = (targetValue: number, modificationType: string) => {
-    const base = Math.max(Math.abs(targetValue), 1)
+  const clampValue = (value: number, min: number, max: number) =>
+    Math.min(Math.max(value, min), max)
+
+  const getModificationRange = (driver: string, modificationType: string) => {
     if (modificationType === "replace") {
-      return {
-        min: Math.max(0, Math.round(base * 0.5)),
-        max: Math.round(base * 1.5),
-        step: Math.max(1, Math.round(base * 0.05)),
-      }
+      return { min: 0, max: 100, step: 5 }
     }
-    return {
-      min: 0,
-      max: Math.round(base * 2),
-      step: Math.max(0.5, Math.round(base * 0.05 * 10) / 10),
-    }
+    return DRIVER_SLIDER_BOUNDS[driver] || DRIVER_SLIDER_BOUNDS.default
   }
 
   const categoryColor = (cat: string) => {
@@ -919,7 +956,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselineRevenue" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioRevenue" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedRevenue" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleARevenue" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBRevenue" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCRevenue" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -937,7 +976,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselineNetProfit" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioNetProfit" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedNetProfit" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleANetProfit" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBNetProfit" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCNetProfit" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -955,7 +996,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselinePrimeCost" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioPrimeCost" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedPrimeCost" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleAPrimeCost" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBPrimeCost" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCPrimeCost" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -973,7 +1016,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselineGrossMargin" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioGrossMargin" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedGrossMargin" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleAGrossMargin" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBGrossMargin" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCGrossMargin" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -1053,7 +1098,8 @@ export default function MitigationsPage() {
                   <p className="text-xs font-medium text-muted-foreground mb-2">Driver Modifications:</p>
                   <div className="grid gap-2 md:grid-cols-2">
                     {mitigation.driver_modifications.map((mod, idx) => {
-                      const range = getModificationRange(mod.target_value, mod.modification_type)
+                      const range = getModificationRange(mod.driver, mod.modification_type)
+                      const clampedValue = clampValue(mod.target_value, range.min, range.max)
                       const inputId = `${mitigation.id}-${mod.driver}-${idx}`
                       return (
                         <div key={idx} className="rounded bg-muted/50 p-3">
@@ -1081,14 +1127,14 @@ export default function MitigationsPage() {
                               <Input
                                 id={inputId}
                                 type="number"
-                                value={mod.target_value}
+                                value={clampedValue}
                                 min={range.min}
                                 max={range.max}
                                 step={range.step}
                                 onChange={event => handleUpdateDriverModification(
                                   mitigation.id,
                                   idx,
-                                  Number(event.target.value)
+                                  clampValue(Number(event.target.value), range.min, range.max)
                                 )}
                                 className="w-24 text-right"
                               />
@@ -1098,11 +1144,11 @@ export default function MitigationsPage() {
                               min={range.min}
                               max={range.max}
                               step={range.step}
-                              value={mod.target_value}
+                              value={clampedValue}
                               onChange={event => handleUpdateDriverModification(
                                 mitigation.id,
                                 idx,
-                                Number(event.target.value)
+                                clampValue(Number(event.target.value), range.min, range.max)
                               )}
                               className="w-full accent-primary"
                             />
