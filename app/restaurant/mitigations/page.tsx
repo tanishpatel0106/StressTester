@@ -524,6 +524,36 @@ export default function MitigationsPage() {
     return `${sign}${formatCurrency(Math.abs(value))}`
   }
 
+  const buildSurvivalSeries = (run: typeof baselineRun | null, totalMonths: number) => {
+    if (!run) return Array.from({ length: totalMonths }, (_, idx) => ({ month: idx + 1, survival: 1 }))
+    const eventMonth = run.survival?.time_to_event_months ?? null
+    return Array.from({ length: totalMonths }, (_, idx) => ({
+      month: idx + 1,
+      survival: eventMonth !== null && idx + 1 >= eventMonth ? 0 : 1,
+    }))
+  }
+
+  const survivalChartData = useMemo(() => {
+    if (!baselineRun) return []
+    const totalMonths = baselineRun.kpi_results.length
+    const baselineSeries = buildSurvivalSeries(baselineRun, totalMonths)
+    const scenarioSeries = buildSurvivalSeries(scenarioRun, totalMonths)
+    const bundleSeries = BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const run = bundleRuns[bundleId] || storedBundleRuns[bundleId] || storedMitigatedRun
+      acc[bundleId] = buildSurvivalSeries(run, totalMonths)
+      return acc
+    }, {} as Record<"A" | "B" | "C", { month: number; survival: number }[]>)
+
+    return baselineSeries.map((point, idx) => ({
+      month: `M${point.month}`,
+      baseline: point.survival,
+      scenario: scenarioSeries[idx]?.survival ?? point.survival,
+      bundleA: bundleSeries.A[idx]?.survival ?? point.survival,
+      bundleB: bundleSeries.B[idx]?.survival ?? point.survival,
+      bundleC: bundleSeries.C[idx]?.survival ?? point.survival,
+    }))
+  }, [baselineRun, bundleRuns, scenarioRun, storedBundleRuns, storedMitigatedRun])
+
   const getComparisonValues = (baselineValue: number, scenarioValue: number, mitigatedValue?: number) => {
     if (comparisonMode === "baseline-scenario") {
       return { reference: baselineValue, comparison: scenarioValue }
@@ -900,6 +930,33 @@ export default function MitigationsPage() {
                 </tbody>
               </table>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {survivalChartData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Survival Analysis</CardTitle>
+            <CardDescription>
+              Probability of staying above the net profit threshold (event defined as net profit below {baselineRun?.survival?.threshold ?? 0} for {baselineRun?.survival?.consecutive_months ?? 2} consecutive months).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={survivalChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} domain={[0, 1]} tickFormatter={value => `${Math.round(value * 100)}%`} />
+                <Tooltip formatter={(value: number) => `${Math.round(value * 100)}%`} />
+                <Legend />
+                <Line type="stepAfter" dataKey="baseline" name="Baseline" stroke="#2563eb" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="scenario" name="Stressed" stroke="#f97316" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="bundleA" name="Bundle A" stroke="#10b981" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="bundleB" name="Bundle B" stroke="#8b5cf6" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="bundleC" name="Bundle C" stroke="#14b8a6" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       )}

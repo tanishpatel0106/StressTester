@@ -490,11 +490,49 @@ export function applyMitigations(
 // COMPUTATION RUNS
 // =============================================================================
 
+function computeSurvivalMetrics(
+  kpiSeries: KPIDataPoint[],
+  options?: {
+    consecutiveMonths?: number
+    netProfitThreshold?: number
+  }
+): {
+  time_to_event_months: number | null
+  event_occurred: boolean
+  consecutive_months: number
+  threshold: number
+} {
+  const consecutiveMonths = options?.consecutiveMonths ?? 2
+  const netProfitThreshold = options?.netProfitThreshold ?? 0
+
+  let streak = 0
+  let eventMonth: number | null = null
+
+  kpiSeries.forEach((kpi, idx) => {
+    if (kpi.net_profit < netProfitThreshold) {
+      streak += 1
+      if (streak >= consecutiveMonths && eventMonth === null) {
+        eventMonth = idx + 1
+      }
+    } else {
+      streak = 0
+    }
+  })
+
+  return {
+    time_to_event_months: eventMonth,
+    event_occurred: eventMonth !== null,
+    consecutive_months: consecutiveMonths,
+    threshold: netProfitThreshold,
+  }
+}
+
 /**
  * Create a baseline computation run.
  */
 export function computeBaseline(contextPack: ContextPack): ComputationRun {
   const derived_results = contextPack.kpi_series.map(computeDerivedKpis)
+  const survival = computeSurvivalMetrics(contextPack.kpi_series)
 
   return {
     id: `CR_baseline_${Date.now()}`,
@@ -503,6 +541,7 @@ export function computeBaseline(contextPack: ContextPack): ComputationRun {
     input_assumptions: [],
     kpi_results: contextPack.kpi_series,
     derived_results,
+    survival,
     summary: {
       total_revenue_change_pct: 0,
       net_profit_change_pct: 0,
@@ -524,6 +563,7 @@ export function computeScenario(
 ): ComputationRun {
   const scenarioKpis = applyScenario(contextPack.kpi_series, assumptions, scenario)
   const derived_results = scenarioKpis.map(computeDerivedKpis)
+  const survival = computeSurvivalMetrics(scenarioKpis)
 
   // Compute deltas
   const baseTotal = baselineRun.kpi_results.reduce((sum, k) => sum + k.total_revenue, 0)
@@ -545,6 +585,7 @@ export function computeScenario(
     input_assumptions: assumptions,
     kpi_results: scenarioKpis,
     derived_results,
+    survival,
     summary: {
       total_revenue_change_pct: ((scenarioTotal - baseTotal) / baseTotal) * 100,
       net_profit_change_pct: baseNetProfit !== 0 ? ((scenarioNetProfit - baseNetProfit) / Math.abs(baseNetProfit)) * 100 : 0,
@@ -596,6 +637,7 @@ export function computeMitigated(
 
   const mitigatedKpis = applyMitigations(scenarioRun.kpi_results, mitigations, mitigationBlend)
   const derived_results = mitigatedKpis.map(computeDerivedKpis)
+  const survival = computeSurvivalMetrics(mitigatedKpis)
 
   // Compute deltas from baseline
   const baseTotal = baselineRun.kpi_results.reduce((sum, k) => sum + k.total_revenue, 0)
@@ -618,6 +660,7 @@ export function computeMitigated(
     input_assumptions: assumptions,
     kpi_results: mitigatedKpis,
     derived_results,
+    survival,
     summary: {
       total_revenue_change_pct: ((mitigatedTotal - baseTotal) / baseTotal) * 100,
       net_profit_change_pct: baseNetProfit !== 0 ? ((mitigatedNetProfit - baseNetProfit) / Math.abs(baseNetProfit)) * 100 : 0,
