@@ -8,6 +8,7 @@ import type {
   MitigationSet,
   ComputationRun,
   RestaurantState,
+  AnalysisSession,
 } from "./types"
 
 // =============================================================================
@@ -20,6 +21,7 @@ interface Store {
   scenarioSets: Map<string, ScenarioSet[]> // context_pack_id -> versions
   mitigationSets: Map<string, MitigationSet[]> // context_pack_id -> versions
   computationRuns: Map<string, ComputationRun[]> // context_pack_id -> runs
+  analysisSessions: Map<string, AnalysisSession>
 }
 
 const store: Store = {
@@ -28,6 +30,7 @@ const store: Store = {
   scenarioSets: new Map(),
   mitigationSets: new Map(),
   computationRuns: new Map(),
+  analysisSessions: new Map(),
 }
 
 // =============================================================================
@@ -53,6 +56,49 @@ export function deleteContextPack(id: string): boolean {
   store.mitigationSets.delete(id)
   store.computationRuns.delete(id)
   return store.contextPacks.delete(id)
+}
+
+// =============================================================================
+// LEGACY ANALYSIS SESSION OPERATIONS
+// =============================================================================
+
+export function createSession(name: string): AnalysisSession {
+  const timestamp = new Date().toISOString()
+  const session: AnalysisSession = {
+    id: `session_${Date.now()}`,
+    name,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    status: "new",
+  }
+
+  store.analysisSessions.set(session.id, session)
+  return session
+}
+
+export function getSession(id: string): AnalysisSession | null {
+  return store.analysisSessions.get(id) || null
+}
+
+export function listSessions(): AnalysisSession[] {
+  return Array.from(store.analysisSessions.values())
+}
+
+export function updateSession(
+  id: string,
+  updates: Partial<AnalysisSession>
+): AnalysisSession | null {
+  const session = store.analysisSessions.get(id)
+  if (!session) return null
+
+  const updated: AnalysisSession = {
+    ...session,
+    ...updates,
+    updatedAt: new Date().toISOString(),
+  }
+
+  store.analysisSessions.set(id, updated)
+  return updated
 }
 
 // =============================================================================

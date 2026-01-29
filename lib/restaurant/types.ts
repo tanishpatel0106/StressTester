@@ -320,3 +320,91 @@ export interface CSVParseResult {
   errors: string[]
   warnings: string[]
 }
+
+// =============================================================================
+// LEGACY ANALYSIS SESSION TYPES (API ROUTES)
+// =============================================================================
+
+export interface BaselineKPIs {
+  revenue: number
+  foodCostPercent: number
+  laborCostPercent: number
+  primeCostPercent: number
+  ebitda: number
+  ebitdaMargin: number
+  cashBalance: number
+  runwayMonths: number
+}
+
+export interface AnalysisAssumption {
+  id: string
+  label: string
+  category: string
+  value: number
+  unit: string
+  riskScore: number
+  rationale?: string
+}
+
+export interface AnalysisScenario {
+  id: string
+  name: string
+  description?: string
+  severity: 'low' | 'moderate' | 'high' | 'critical'
+  probability: number
+}
+
+export interface AnalysisScenarioResult {
+  breaks: boolean
+  breakReason?: string
+  kpiDelta?: Record<string, number>
+}
+
+export interface AnalysisPreventiveAction {
+  action: string
+  timing: string
+  cost: string
+  effectiveness: number
+}
+
+export interface AnalysisContingencyAction {
+  trigger: string
+  action: string
+  timeline: string
+  impact: string
+}
+
+export interface AnalysisMonitoringMetric {
+  metric: string
+  threshold: string
+  frequency: string
+}
+
+export interface AnalysisMitigation {
+  scenarioId: string
+  preventiveActions: AnalysisPreventiveAction[]
+  contingencyActions: AnalysisContingencyAction[]
+  monitoringMetrics: AnalysisMonitoringMetric[]
+}
+
+export interface ExecutiveSummary {
+  overallRiskRating: 'low' | 'moderate' | 'high' | 'critical'
+  keyFindings: string[]
+  topRisks: { risk: string; likelihood: string; impact: string }[]
+  recommendations: string[]
+}
+
+export interface AnalysisSession {
+  id: string
+  name: string
+  createdAt: string
+  updatedAt: string
+  status: 'new' | 'assumptions_ready' | 'scenarios_ready' | 'results_ready' | 'mitigations_ready' | 'complete' | 'error'
+  rawData?: unknown
+  baselineKPIs?: BaselineKPIs
+  assumptions?: AnalysisAssumption[]
+  scenarios?: AnalysisScenario[]
+  scenarioResults?: AnalysisScenarioResult[]
+  mitigations?: AnalysisMitigation[]
+  executiveSummary?: ExecutiveSummary
+}
