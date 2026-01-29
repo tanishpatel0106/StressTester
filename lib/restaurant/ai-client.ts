@@ -139,7 +139,7 @@ export async function generateAssumptions(
 ): Promise<AIAssumptionsResponse> {
   try {
     const { object } = await generateObject({
-      model: "openai/gpt-4o",
+      model: "openai/gpt-5.2",
       schema: AIAssumptionsResponseSchema,
       system: SYSTEM_PROMPT,
       prompt: ASSUMPTIONS_PROMPT(contextPack),
@@ -177,7 +177,7 @@ export async function generateScenarios(
 ): Promise<AIScenariosResponse> {
   try {
     const { object } = await generateObject({
-      model: "openai/gpt-4o",
+      model: "openai/gpt-5.2",
       schema: AIScenariosResponseSchema,
       system: SYSTEM_PROMPT,
       prompt: SCENARIOS_PROMPT(contextPack, assumptions),
@@ -231,7 +231,7 @@ export async function generateMitigations(
 ): Promise<AIMitigationsResponse> {
   try {
     const { object } = await generateObject({
-      model: "openai/gpt-4o",
+      model: "openai/gpt-5.2",
       schema: AIMitigationsResponseSchema,
       system: SYSTEM_PROMPT,
       prompt: MITIGATIONS_PROMPT(scenario, assumptions),

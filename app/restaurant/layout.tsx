@@ -11,8 +11,8 @@ export default function RestaurantLayout({ children }: { children: ReactNode }) 
           <div className="flex h-16 items-center justify-between">
             <div className="flex items-center gap-3">
               <Link href="/restaurant" className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-500/10">
-                  <UtensilsCrossed className="h-5 w-5 text-amber-600" />
+                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#390077]/10">
+                  <UtensilsCrossed className="h-5 w-5 text-[#390077]" />
                 </div>
                 <div>
                   <h1 className="text-lg font-semibold text-foreground">
