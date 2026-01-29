@@ -244,6 +244,26 @@ Your role is to design realistic, decision-relevant stress scenarios that delibe
 These scenarios will later be simulated numerically, so realism and precision are essential.
 
 ────────────────────────────────────────
+DIRECTIONAL CONSTRAINT (CRITICAL)
+────────────────────────────────────────
+This agent designs ONLY NEGATIVE stress scenarios.
+
+A stress scenario MUST:
+• Worsen financial performance relative to the base case
+• Increase risk, pressure, or constraint
+• Move key metrics in an adverse direction
+
+Explicitly DISALLOWED:
+• Revenue increases
+• Demand growth
+• Margin expansion
+• Cost reductions
+• Efficiency improvements
+• Any “recovery”, “optimization”, or “improvement” framing
+
+If a change improves a metric, it is INVALID.
+
+────────────────────────────────────────
 CORE OBJECTIVE
 ────────────────────────────────────────
 Create stress scenarios that answer the question:
@@ -296,6 +316,16 @@ All changes must be realistic and defensible:
 • If unsure, prefer shorter duration over extreme magnitude
 • Do NOT introduce new metrics — only shock existing ones
 
+All metric changes must represent deterioration relative to baseline.
+
+Examples:
+• Revenue, demand, retention → decrease
+• Costs → increase
+• Margins → decrease
+• Liquidity runway → shorten
+
+If the sign of the change is ambiguous, explain why it is adverse.
+
 ────────────────────────────────────────
 SCENARIO SEVERITY
 ────────────────────────────────────────
@@ -313,6 +343,8 @@ STRICT RULES
 3. Tie every scenario to assumption IDs explicitly
 4. Avoid overlapping duplicate scenarios
 5. Keep scenarios interpretable by operators and CFOs
+6. Do NOT frame scenarios as opportunities, recoveries, or improvements
+7. Scenario names and rationales must reflect stress, pressure, or failure modes
 
 ────────────────────────────────────────
 OUTPUT FORMAT (STRICT JSON)
@@ -355,6 +387,27 @@ Your role is to design concrete, realistic mitigation strategies for stress scen
 Mitigations must be operationally feasible, time-aware, and financially grounded.
 
 ────────────────────────────────────────
+MITIGATION BOUNDARY (CRITICAL)
+────────────────────────────────────────
+Mitigations exist to REDUCE DAMAGE — not to create upside.
+
+Mitigations MUST:
+• Operate within a stressed environment
+• Improve outcomes relative to the stress scenario
+• BUT NOT exceed or outperform the original baseline plan
+
+Explicitly DISALLOWED:
+• Growth initiatives
+• Expansion strategies
+• New revenue creation
+• Optimizations that assume normal conditions
+
+Think in terms of:
+• Loss containment
+• Cash preservation
+• Survival and stabilization
+
+────────────────────────────────────────
 CORE OBJECTIVE
 ────────────────────────────────────────
 For each critical stress scenario, determine:
@@ -394,6 +447,15 @@ DESIGN PRINCIPLES
 • Prefer reversible actions over irreversible ones
 • Assume restaurant constraints: labor laws, supplier contracts, demand elasticity
 
+Preventive actions:
+• Reduce exposure BEFORE the shock
+• Must be low-regret and defensive
+
+Contingency actions:
+• Assume the shock has already occurred
+• Focus on stopping further deterioration
+• Do NOT assume demand recovery or cost normalization
+
 ────────────────────────────────────────
 RESTAURANT-RELEVANT MITIGATION LEVERS
 ────────────────────────────────────────
@@ -416,6 +478,8 @@ STRICT RULES
 3. Tie mitigations to the scenario’s affected assumptions
 4. Avoid generic advice (e.g., “cut costs” without specifics)
 5. If a mitigation has trade-offs, acknowledge them
+6. Mitigations must not result in net-positive outcomes versus baseline
+7. If a mitigation could improve a metric above baseline, reframe it as damage reduction
 
 ────────────────────────────────────────
 OUTPUT FORMAT (STRICT JSON)
@@ -456,9 +520,14 @@ For EACH scenario, output:
 QUALITY BAR
 ────────────────────────────────────────
 If a restaurant operator followed this playbook during a downturn,
-they should be able to respond quickly, preserve cash, and stabilize operations.
+they should be able to respond quickly, limit losses, preserve liquidity, and maintain viability under stress.
 
 Design mitigations until all severe and load-bearing scenarios have a clear response plan.
+
+Each mitigation strategy should assume that some damage remains.
+
+Do NOT design “perfect fixes”.
+Residual pressure is expected.
 `;
 
 // Evidence Store Functions
