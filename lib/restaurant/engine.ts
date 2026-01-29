@@ -16,6 +16,7 @@ import type {
   CSVParseResult,
   DerivedKPIName,
 } from "./types"
+import { buildShockCurve } from "./forecasting"
 
 // =============================================================================
 // KPI SPINE COMPUTATIONS
@@ -249,6 +250,36 @@ function isShockActiveForMonth(shock: AssumptionShock, monthIdx: number, kpiDate
   return monthIdx < startOffset + shock.duration_months
 }
 
+const resolveShockStartIndex = (shock: AssumptionShock, baseKpis: KPIDataPoint[]) => {
+  if (shock.start_month_offset !== undefined) return shock.start_month_offset
+  if (shock.start_date) {
+    const startTime = new Date(shock.start_date).getTime()
+    const foundIndex = baseKpis.findIndex(kpi => new Date(kpi.date).getTime() >= startTime)
+    if (foundIndex >= 0) return foundIndex
+  }
+  return 0
+}
+
+const resolveShockEndIndex = (
+  shock: AssumptionShock,
+  baseKpis: KPIDataPoint[],
+  startIndex: number
+) => {
+  if (shock.duration_months !== undefined) {
+    return startIndex + Math.max(0, shock.duration_months - 1)
+  }
+  if (shock.end_date) {
+    const endTime = new Date(shock.end_date).getTime()
+    const reverseIndex = [...baseKpis].reverse().findIndex(
+      kpi => new Date(kpi.date).getTime() <= endTime
+    )
+    if (reverseIndex >= 0) {
+      return baseKpis.length - 1 - reverseIndex
+    }
+  }
+  return baseKpis.length - 1
+}
+
 /**
  * Apply scenario shocks to assumptions and recompute KPIs.
  * Scenarios shock ASSUMPTIONS, not KPIs directly.
@@ -260,12 +291,38 @@ export function applyScenario(
 ): KPIDataPoint[] {
   // Create a map of assumption modifications
   const assumptionMods: Map<string, number> = new Map()
+  const shockByAssumption: Map<string, AssumptionShock> = new Map()
+  const curveCache: Map<string, number[]> = new Map()
+  const shockWindowCache: Map<
+    string,
+    { startIndex: number; endIndex: number; horizonMonths: number }
+  > = new Map()
+  const scenarioCurve = scenario.shock_curve ?? 'flat'
   
   for (const shock of scenario.assumption_shocks) {
     const assumption = assumptions.find(a => a.id === shock.assumption_id)
     if (assumption) {
       const modifiedValue = applyShock(assumption.baseline_value, shock)
       assumptionMods.set(assumption.id, modifiedValue)
+      shockByAssumption.set(assumption.id, shock)
+
+      const startIndex = resolveShockStartIndex(shock, baseKpis)
+      const endIndex = Math.min(
+        baseKpis.length - 1,
+        resolveShockEndIndex(shock, baseKpis, startIndex)
+      )
+      if (endIndex >= startIndex) {
+        const horizonMonths = Math.max(1, endIndex - startIndex + 1)
+        shockWindowCache.set(assumption.id, { startIndex, endIndex, horizonMonths })
+        curveCache.set(
+          assumption.id,
+          buildShockCurve({
+            curve: scenarioCurve,
+            horizonMonths,
+            kpiSeries: baseKpis,
+          }).values
+        )
+      }
     }
   }
 
@@ -278,36 +335,46 @@ export function applyScenario(
       if (modValue === undefined) continue
 
       // Check if shock applies to this month
-      const shock = scenario.assumption_shocks.find(s => s.assumption_id === assumption.id)
+      const shock = shockByAssumption.get(assumption.id)
       if (shock && !isShockActiveForMonth(shock, monthIdx, kpi.date)) continue
 
       // Calculate the change ratio
       const changeRatio = modValue / assumption.baseline_value
+      const shockWindow = shockWindowCache.get(assumption.id)
+      const curveValues = curveCache.get(assumption.id)
+      let blendedRatio = changeRatio
+
+      if (shock && shockWindow && curveValues) {
+        const monthOffset = monthIdx - shockWindow.startIndex
+        const blendToBaseline =
+          monthOffset >= 0 && monthOffset < curveValues.length ? curveValues[monthOffset] : 1
+        blendedRatio = changeRatio * (1 - blendToBaseline) + 1 * blendToBaseline
+      }
 
       // Apply based on category (simplified mapping)
       switch (assumption.category) {
         case 'revenue':
-          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * changeRatio)
+          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * blendedRatio)
           break
         case 'cogs':
-          modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * changeRatio)
+          modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * blendedRatio)
           break
         case 'wages':
-          modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * changeRatio)
+          modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * blendedRatio)
           break
         case 'operating_expenses':
-          modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * changeRatio)
+          modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * blendedRatio)
           break
         case 'non_operating_expenses':
-          modifiedKpi.non_operating_expenses = Math.round(modifiedKpi.non_operating_expenses * changeRatio)
+          modifiedKpi.non_operating_expenses = Math.round(modifiedKpi.non_operating_expenses * blendedRatio)
           break
         case 'seasonality':
           // Affects revenue
-          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * changeRatio)
+          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * blendedRatio)
           break
         case 'external':
           // Could affect multiple - simplify to revenue
-          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * changeRatio)
+          modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * blendedRatio)
           break
       }
     }

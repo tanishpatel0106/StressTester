@@ -121,6 +121,7 @@ export const AssumptionSetSchema = z.object({
 // =============================================================================
 
 export const ScenarioSeveritySchema = z.enum(['low', 'moderate', 'high', 'critical'])
+export const ShockCurveSchema = z.enum(['flat', 'decay', 'recovery'])
 
 export const AssumptionShockSchema = z.object({
   assumption_id: z.string(),
@@ -138,6 +139,7 @@ export const ScenarioSchema = z.object({
   description: z.string(),
   severity: ScenarioSeveritySchema,
   probability: z.number().min(0).max(1),
+  shock_curve: ShockCurveSchema.optional(),
   assumption_shocks: z.array(AssumptionShockSchema),
   trigger_conditions: z.array(z.string()),
   expected_impact: z.string(),
@@ -242,6 +244,7 @@ export const AIScenarioOutputSchema = z.object({
   description: z.string(),
   severity: z.string(),
   probability: z.number(),
+  shock_curve: z.string().nullable(),
   assumption_shocks: z.array(z.object({
     assumption_id: z.string(),
     shock_type: z.string(),
