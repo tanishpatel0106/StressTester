@@ -13,7 +13,7 @@ import type {
 } from "@/lib/types"
 
 // Use OpenAI model via Vercel AI Gateway
-const AI_MODEL = "openai/gpt-4o"
+const AI_MODEL = "openai/gpt-5.2"
 
 // Simpler schemas that are easier for the model to match
 

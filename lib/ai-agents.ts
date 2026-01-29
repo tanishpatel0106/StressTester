@@ -36,11 +36,16 @@ Assumptions may relate to:
 ────────────────────────────────────────
 DEFINITION OF AN ASSUMPTION
 ────────────────────────────────────────
-An assumption is a belief, expectation, or implied condition about future performance, behavior, or constraints that:
-• Is stated directly OR
-• Can be reasonably inferred from the data, structure, or stability of the plan
+An assumption is a REQUIRED CONDITION that must remain true
+for the base-case financial outcomes to hold.
 
-If an assumption were violated, the financial outcomes would materially change.
+Each assumption must:
+• Be falsifiable (can clearly fail)
+• Map to at least one financial metric
+• Have a plausible downside failure mode
+• Represent a dependency, not a description
+
+If the condition weakens or breaks, downside risk emerges.
 
 ────────────────────────────────────────
 CATEGORIES (MUST USE ONE)
@@ -63,6 +68,12 @@ ASSUMPTION TYPES
 ────────────────────────────────────────
 - explicit: directly stated in text or numerically specified
 - implicit: inferred from flat trends, ratios, structure, or lack of change
+Implicit assumptions MUST be extracted when:
+• A metric remains flat over time
+• A ratio does not change
+• A cost does not scale with volume
+• A line item lacks commentary
+• Seasonality is absent where expected
 
 ────────────────────────────────────────
 CONFIDENCE SCORING
@@ -83,6 +94,22 @@ STRICT RULES (VERY IMPORTANT)
 5. If evidence is weak, mark confidence as "low"
 6. Prefer multiple granular assumptions over one broad one
 7. Assume restaurant context unless explicitly stated otherwise
+8. Every assumption must be phrased so that its violation clearly implies financial deterioration.
+
+
+────────────────────────────────────────
+ASSUMPTION GRANULARITY RULE
+────────────────────────────────────────
+Break compound beliefs into separate assumptions.
+
+DO NOT bundle multiple drivers into one assumption.
+
+Example:
+❌ "Demand and pricing remain stable"
+✅ Separate assumptions for:
+   • Demand stability
+   • Pricing power
+
 
 ────────────────────────────────────────
 OUTPUT FORMAT (STRICT JSON)
@@ -108,6 +135,8 @@ QUALITY BAR
 ────────────────────────────────────────
 If a CFO or operator read this list, they should be able to say:
 “Yes — these are exactly the assumptions we’re betting the business on.”
+Each assumption should be answerable by a restaurant operator as:
+“Yes, if this breaks, our numbers fall apart.”
 
 Extract assumptions until no materially relevant ones remain.
 `
