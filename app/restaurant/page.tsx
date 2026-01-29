@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
+import * as XLSX from "xlsx"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,13 +23,95 @@ import { parseCSV, buildContextPack, computeBaseline } from "@/lib/restaurant/en
 import { saveContextPack, saveComputationRun, loadSampleData } from "@/lib/restaurant/storage"
 import type { CSVParseResult } from "@/lib/restaurant/types"
 
+type SupplementalEvidenceEntry = {
+  source: string
+  value: string | number
+  type?: "csv_cell" | "computed" | "user_input" | "ai_inferred"
+  row?: number
+  column?: string
+}
+
+type UploadSummary = {
+  name: string
+  entries: SupplementalEvidenceEntry[]
+}
+
 export default function RestaurantUploadPage() {
   const router = useRouter()
   const [restaurantName, setRestaurantName] = useState("")
   const [csvText, setCsvText] = useState("")
+  const [contextText, setContextText] = useState("")
+  const [contextFileName, setContextFileName] = useState<string | null>(null)
+  const [additionalUploads, setAdditionalUploads] = useState<UploadSummary[]>([])
   const [parseResult, setParseResult] = useState<CSVParseResult | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const readFileAsText = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsText(file)
+    })
+
+  const readFileAsArrayBuffer = (file: File) =>
+    new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as ArrayBuffer)
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(file)
+    })
+
+  const buildTabularEvidence = (fileName: string, rows: Array<Array<string | number>>) => {
+    if (rows.length === 0) return []
+    const headers = rows[0].map((header, index) =>
+      String(header || `Column ${index + 1}`)
+    )
+    const entries: SupplementalEvidenceEntry[] = []
+
+    rows.slice(1).forEach((row, rowIndex) => {
+      row.forEach((value, colIndex) => {
+        if (value === "" || value == null) return
+        entries.push({
+          source: fileName,
+          type: "csv_cell",
+          row: rowIndex + 1,
+          column: headers[colIndex] ?? `Column ${colIndex + 1}`,
+          value,
+        })
+      })
+    })
+
+    return entries
+  }
+
+  const parseTabularFile = async (file: File) => {
+    const extension = file.name.split(".").pop()?.toLowerCase()
+    if (extension === "csv") {
+      const text = await readFileAsText(file)
+      const workbook = XLSX.read(text, { type: "string" })
+      const sheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json<Array<string | number>>(sheet, {
+        header: 1,
+        defval: "",
+      })
+      return buildTabularEvidence(file.name, rows)
+    }
+
+    if (extension === "xlsx" || extension === "xls") {
+      const buffer = await readFileAsArrayBuffer(file)
+      const workbook = XLSX.read(buffer, { type: "array" })
+      const sheet = workbook.Sheets[workbook.SheetNames[0]]
+      const rows = XLSX.utils.sheet_to_json<Array<string | number>>(sheet, {
+        header: 1,
+        defval: "",
+      })
+      return buildTabularEvidence(file.name, rows)
+    }
+
+    return null
+  }
 
   const handleParse = useCallback(() => {
     if (!csvText.trim()) {
@@ -50,6 +133,9 @@ export default function RestaurantUploadPage() {
     const sampleCSV = loadSampleData()
     setCsvText(sampleCSV)
     setRestaurantName("Sample Restaurant")
+    setContextText("")
+    setContextFileName(null)
+    setAdditionalUploads([])
     
     const result = parseCSV(sampleCSV)
     setParseResult(result)
@@ -68,10 +154,23 @@ export default function RestaurantUploadPage() {
       const datasetId = `DS_${Date.now()}`
       
       // Build context pack
+      const supplementalEvidence = [
+        ...(contextText.trim()
+          ? [
+              {
+                source: contextFileName || "restaurant_context.md",
+                value: contextText,
+              },
+            ]
+          : []),
+        ...additionalUploads.flatMap((upload) => upload.entries),
+      ]
+
       const contextPack = buildContextPack(
         parseResult.data,
         restaurantName,
-        datasetId
+        datasetId,
+        supplementalEvidence
       )
       
       // Save context pack
@@ -88,7 +187,7 @@ export default function RestaurantUploadPage() {
     } finally {
       setIsProcessing(false)
     }
-  }, [parseResult, restaurantName, router])
+  }, [parseResult, restaurantName, contextText, contextFileName, additionalUploads, router])
 
   return (
     <div className="space-y-6">
@@ -143,6 +242,93 @@ export default function RestaurantUploadPage() {
                 value={csvText}
                 onChange={(e) => setCsvText(e.target.value)}
               />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="restaurant-context">Restaurant Context (Markdown)</Label>
+              <Textarea
+                id="restaurant-context"
+                placeholder="Paste restaurant context here (menu, pricing approach, location, staffing notes, etc.)"
+                className="text-xs"
+                value={contextText}
+                onChange={(e) => {
+                  setContextText(e.target.value)
+                  setContextFileName(null)
+                }}
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Optional, but improves assumption quality and evidence references.</span>
+                <Input
+                  type="file"
+                  accept=".md,.txt"
+                  className="max-w-[220px]"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file) return
+                    try {
+                      const content = await readFileAsText(file)
+                      setContextText(content)
+                      setContextFileName(file.name)
+                    } catch (fileError) {
+                      setError(fileError instanceof Error ? fileError.message : "Failed to read context file")
+                    }
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="additional-uploads">Additional Supporting Documents</Label>
+              <Input
+                id="additional-uploads"
+                type="file"
+                accept=".md,.txt,.csv,.xlsx,.xls"
+                multiple
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files || [])
+                  if (files.length === 0) return
+                  try {
+                    const uploads = await Promise.all(
+                      files.map(async (file) => {
+                        const tabularEntries = await parseTabularFile(file)
+                        if (tabularEntries) {
+                          return {
+                            name: file.name,
+                            entries: tabularEntries,
+                          }
+                        }
+
+                        const content = await readFileAsText(file)
+                        return {
+                          name: file.name,
+                          entries: [
+                            {
+                              source: file.name,
+                              type: "user_input",
+                              value: content,
+                            },
+                          ],
+                        }
+                      })
+                    )
+                    setAdditionalUploads(uploads)
+                  } catch (fileError) {
+                    setError(fileError instanceof Error ? fileError.message : "Failed to read additional files")
+                  }
+                }}
+              />
+              {additionalUploads.length > 0 && (
+                <div className="rounded-md border border-border bg-muted/40 p-2 text-xs text-muted-foreground">
+                  <p className="font-medium text-foreground">Files queued for evidence:</p>
+                  <ul className="mt-1 space-y-1">
+                    {additionalUploads.map((file) => (
+                      <li key={file.name} className="font-mono">
+                        {file.name} ({file.entries.length} evidence rows)
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
             
             <div className="flex gap-2">
