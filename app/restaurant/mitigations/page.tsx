@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback, useMemo } from "react"
+import { useState, useMemo, useEffect } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -22,10 +22,22 @@ import {
   saveMitigationSet, 
   saveComputationRun,
   getLatestBaseline,
+  getLatestMitigatedRun,
+  getLatestScenarioRun,
 } from "@/lib/restaurant/storage"
 import { generateMitigations } from "@/lib/restaurant/ai-client"
-import { computeMitigated, formatCurrency, formatDelta } from "@/lib/restaurant/engine"
-import type { Mitigation, MitigationSet } from "@/lib/restaurant/types"
+import { computeMitigated, formatCurrency, formatDelta, formatPercent } from "@/lib/restaurant/engine"
+import type { Mitigation, MitigationSet, KPIName, DerivedKPIName } from "@/lib/restaurant/types"
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend,
+} from "recharts"
 
 export default function MitigationsPage() {
   const searchParams = useSearchParams()
@@ -41,14 +53,23 @@ export default function MitigationsPage() {
   const state = getRestaurantState(contextPackId || '')
   const baselineRun = contextPackId ? getLatestBaseline(contextPackId) : null
 
+  const scenarioRun = useMemo(() => {
+    if (!contextPackId || !selectedScenarioId) return null
+    return getLatestScenarioRun(contextPackId, selectedScenarioId)
+  }, [contextPackId, selectedScenarioId, state?.scenario_computations])
+
+  const storedMitigatedRun = useMemo(() => {
+    if (!contextPackId || !selectedScenarioId) return null
+    return getLatestMitigatedRun(contextPackId, selectedScenarioId)
+  }, [contextPackId, selectedScenarioId, state?.mitigated_computations])
+
   // Calculate mitigated results
   const mitigatedResult = useMemo(() => {
-    if (!selectedScenarioId || !state?.context_pack || !baselineRun) return null
+    if (!selectedScenarioId || !state?.context_pack || !baselineRun || !scenarioRun) return null
     
     const mitigations = localMitigations || state.mitigation_set?.mitigations || []
     const scenarioMitigations = mitigations.filter(m => m.scenario_id === selectedScenarioId && m.enabled)
     const scenario = state.scenario_set?.scenarios.find(s => s.id === selectedScenarioId)
-    const scenarioRun = state.scenario_computations.find(r => r.scenario_id === selectedScenarioId)
     
     if (!scenario || !scenarioRun || scenarioMitigations.length === 0) return null
     
@@ -60,7 +81,13 @@ export default function MitigationsPage() {
       baselineRun,
       scenarioRun
     )
-  }, [selectedScenarioId, state, localMitigations, baselineRun])
+  }, [selectedScenarioId, state, localMitigations, baselineRun, scenarioRun])
+
+  useEffect(() => {
+    if (mitigatedResult) {
+      saveComputationRun(mitigatedResult)
+    }
+  }, [mitigatedResult])
 
   if (!contextPackId) {
     return (
@@ -200,7 +227,83 @@ export default function MitigationsPage() {
 
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId)
   const scenarioMitigations = mitigations.filter(m => m.scenario_id === selectedScenarioId)
-  const scenarioRun = state.scenario_computations.find(r => r.scenario_id === selectedScenarioId)
+  const activeMitigatedRun = mitigatedResult || storedMitigatedRun
+
+  const alignedSeries = useMemo(() => {
+    if (!baselineRun || !scenarioRun) return null
+    return baselineRun.kpi_results.map((baselineKpi, idx) => {
+      const baselineDerived = baselineRun.derived_results[idx]
+      const scenarioKpi = scenarioRun.kpi_results[idx] || baselineKpi
+      const scenarioDerived = scenarioRun.derived_results[idx] || baselineDerived
+      const mitigatedKpi = activeMitigatedRun?.kpi_results[idx] || scenarioKpi
+      const mitigatedDerived = activeMitigatedRun?.derived_results[idx] || scenarioDerived
+      return {
+        date: baselineKpi.date,
+        baselineKpi,
+        scenarioKpi,
+        mitigatedKpi,
+        baselineDerived,
+        scenarioDerived,
+        mitigatedDerived,
+      }
+    })
+  }, [baselineRun, scenarioRun, activeMitigatedRun])
+
+  const kpiComparison = useMemo(() => {
+    if (!baselineRun || !scenarioRun) return null
+    const mitigatedRun = activeMitigatedRun
+    const sum = (values: number[]) => values.reduce((total, value) => total + value, 0)
+    const average = (values: number[]) => (values.length === 0 ? 0 : sum(values) / values.length)
+    const getKpiTotals = (run: typeof baselineRun) => {
+      const totals = {
+        TOTAL_REVENUE: sum(run.kpi_results.map(kpi => kpi.total_revenue)),
+        COST_OF_GOODS_SOLD: sum(run.kpi_results.map(kpi => kpi.cost_of_goods_sold)),
+        GROSS_PROFIT: sum(run.kpi_results.map(kpi => kpi.gross_profit)),
+        WAGE_COSTS: sum(run.kpi_results.map(kpi => kpi.wage_costs)),
+        OPERATING_EXPENSES: sum(run.kpi_results.map(kpi => kpi.operating_expenses)),
+        NON_OPERATING_EXPENSES: sum(run.kpi_results.map(kpi => kpi.non_operating_expenses)),
+        NET_PROFIT: sum(run.kpi_results.map(kpi => kpi.net_profit)),
+      }
+      const derived = {
+        gross_margin_pct: average(run.derived_results.map(d => d.gross_margin_pct)),
+        cogs_pct: average(run.derived_results.map(d => d.cogs_pct)),
+        wage_pct: average(run.derived_results.map(d => d.wage_pct)),
+        prime_cost: sum(run.derived_results.map(d => d.prime_cost)),
+        prime_cost_pct: average(run.derived_results.map(d => d.prime_cost_pct)),
+        net_margin: average(run.derived_results.map(d => d.net_margin)),
+      }
+      return { totals, derived }
+    }
+
+    const baselineTotals = getKpiTotals(baselineRun)
+    const scenarioTotals = getKpiTotals(scenarioRun)
+    const mitigatedTotals = mitigatedRun ? getKpiTotals(mitigatedRun) : null
+
+    return {
+      baselineTotals,
+      scenarioTotals,
+      mitigatedTotals,
+    }
+  }, [baselineRun, scenarioRun, activeMitigatedRun])
+
+  const chartData = useMemo(() => {
+    if (!alignedSeries) return []
+    return alignedSeries.map(point => ({
+      date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+      baselineRevenue: point.baselineKpi.total_revenue,
+      scenarioRevenue: point.scenarioKpi.total_revenue,
+      mitigatedRevenue: point.mitigatedKpi.total_revenue,
+      baselineNetProfit: point.baselineKpi.net_profit,
+      scenarioNetProfit: point.scenarioKpi.net_profit,
+      mitigatedNetProfit: point.mitigatedKpi.net_profit,
+      baselinePrimeCost: point.baselineKpi.cost_of_goods_sold + point.baselineKpi.wage_costs,
+      scenarioPrimeCost: point.scenarioKpi.cost_of_goods_sold + point.scenarioKpi.wage_costs,
+      mitigatedPrimeCost: point.mitigatedKpi.cost_of_goods_sold + point.mitigatedKpi.wage_costs,
+      baselineGrossMargin: point.baselineDerived.gross_margin_pct,
+      scenarioGrossMargin: point.scenarioDerived.gross_margin_pct,
+      mitigatedGrossMargin: point.mitigatedDerived.gross_margin_pct,
+    }))
+  }, [alignedSeries])
 
   const categoryColor = (cat: string) => {
     switch (cat) {
@@ -212,6 +315,34 @@ export default function MitigationsPage() {
       default: return ''
     }
   }
+
+  const spineKpiMeta: Array<{
+    key: KPIName
+    label: string
+    denominator: string
+  }> = [
+    { key: 'TOTAL_REVENUE', label: 'Total Revenue', denominator: 'Sum over period' },
+    { key: 'COST_OF_GOODS_SOLD', label: 'Cost of Goods Sold', denominator: 'Sum over period' },
+    { key: 'GROSS_PROFIT', label: 'Gross Profit', denominator: 'Sum over period' },
+    { key: 'WAGE_COSTS', label: 'Wage Costs', denominator: 'Sum over period' },
+    { key: 'OPERATING_EXPENSES', label: 'Operating Expenses', denominator: 'Sum over period' },
+    { key: 'NON_OPERATING_EXPENSES', label: 'Non-Operating Expenses', denominator: 'Sum over period' },
+    { key: 'NET_PROFIT', label: 'Net Profit', denominator: 'Sum over period' },
+  ]
+
+  const derivedKpiMeta: Array<{
+    key: DerivedKPIName
+    label: string
+    denominator: string
+    isPercent: boolean
+  }> = [
+    { key: 'gross_margin_pct', label: 'Gross Margin %', denominator: 'Gross profit / revenue', isPercent: true },
+    { key: 'cogs_pct', label: 'COGS %', denominator: 'COGS / revenue', isPercent: true },
+    { key: 'wage_pct', label: 'Wage %', denominator: 'Wages / revenue', isPercent: true },
+    { key: 'prime_cost', label: 'Prime Cost', denominator: 'COGS + wages (sum)', isPercent: false },
+    { key: 'prime_cost_pct', label: 'Prime Cost %', denominator: 'Prime cost / revenue', isPercent: true },
+    { key: 'net_margin', label: 'Net Margin %', denominator: 'Net profit / revenue', isPercent: true },
+  ]
 
   return (
     <div className="space-y-6">
@@ -310,6 +441,156 @@ export default function MitigationsPage() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {baselineRun && scenarioRun && kpiComparison && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">KPI Comparison</CardTitle>
+            <CardDescription>
+              Baseline vs stressed vs mitigated outcomes with explicit denominators.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">KPI</th>
+                    <th className="py-2 pr-4">Baseline</th>
+                    <th className="py-2 pr-4">Stressed</th>
+                    <th className="py-2 pr-4">Mitigated</th>
+                    <th className="py-2 pr-4">Δ% (Mitigated vs Baseline)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spineKpiMeta.map(meta => {
+                    const baselineValue = kpiComparison.baselineTotals.totals[meta.key]
+                    const scenarioValue = kpiComparison.scenarioTotals.totals[meta.key]
+                    const mitigatedValue = kpiComparison.mitigatedTotals?.totals[meta.key]
+                    const deltaPct = mitigatedValue === undefined || baselineValue === 0
+                      ? null
+                      : ((mitigatedValue - baselineValue) / Math.abs(baselineValue)) * 100
+                    return (
+                      <tr key={meta.key} className="border-b border-border/50">
+                        <td className="py-3 pr-4">
+                          <div className="font-medium text-foreground">{meta.label}</div>
+                          <div className="text-xs text-muted-foreground">{meta.denominator}</div>
+                        </td>
+                        <td className="py-3 pr-4">{formatCurrency(baselineValue)}</td>
+                        <td className="py-3 pr-4">{formatCurrency(scenarioValue)}</td>
+                        <td className="py-3 pr-4">
+                          {mitigatedValue === undefined ? '-' : formatCurrency(mitigatedValue)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {deltaPct === null ? '-' : formatDelta(deltaPct)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                  {derivedKpiMeta.map(meta => {
+                    const baselineValue = kpiComparison.baselineTotals.derived[meta.key]
+                    const scenarioValue = kpiComparison.scenarioTotals.derived[meta.key]
+                    const mitigatedValue = kpiComparison.mitigatedTotals?.derived[meta.key]
+                    const deltaPct = mitigatedValue === undefined || baselineValue === 0
+                      ? null
+                      : ((mitigatedValue - baselineValue) / Math.abs(baselineValue)) * 100
+                    const formatter = meta.isPercent ? formatPercent : formatCurrency
+                    return (
+                      <tr key={meta.key} className="border-b border-border/50">
+                        <td className="py-3 pr-4">
+                          <div className="font-medium text-foreground">{meta.label}</div>
+                          <div className="text-xs text-muted-foreground">{meta.denominator}</div>
+                        </td>
+                        <td className="py-3 pr-4">{formatter(baselineValue)}</td>
+                        <td className="py-3 pr-4">{formatter(scenarioValue)}</td>
+                        <td className="py-3 pr-4">
+                          {mitigatedValue === undefined ? '-' : formatter(mitigatedValue)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {deltaPct === null ? '-' : formatDelta(deltaPct)}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {chartData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Scenario vs Mitigation Trends</CardTitle>
+            <CardDescription>
+              Overlayed baseline, stressed, and mitigated KPI trajectories.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-6 lg:grid-cols-2">
+            <div className="h-64">
+              <p className="text-sm font-medium text-foreground mb-2">Total Revenue</p>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatCurrency(value)} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="baselineRevenue" name="Baseline" stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioRevenue" name="Stressed" stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedRevenue" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="h-64">
+              <p className="text-sm font-medium text-foreground mb-2">Net Profit</p>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatCurrency(value)} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="baselineNetProfit" name="Baseline" stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioNetProfit" name="Stressed" stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedNetProfit" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="h-64">
+              <p className="text-sm font-medium text-foreground mb-2">Prime Cost</p>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatCurrency(value)} />
+                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="baselinePrimeCost" name="Baseline" stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioPrimeCost" name="Stressed" stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedPrimeCost" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="h-64">
+              <p className="text-sm font-medium text-foreground mb-2">Gross Margin %</p>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatPercent(value)} />
+                  <Tooltip formatter={(value: number) => formatPercent(value)} />
+                  <Legend />
+                  <Line type="monotone" dataKey="baselineGrossMargin" name="Baseline" stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioGrossMargin" name="Stressed" stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedGrossMargin" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           </CardContent>
         </Card>
       )}

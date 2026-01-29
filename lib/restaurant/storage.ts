@@ -192,6 +192,30 @@ export function getLatestBaseline(contextPackId: string): ComputationRun | null 
   )
 }
 
+export function getLatestScenarioRun(
+  contextPackId: string,
+  scenarioId: string
+): ComputationRun | null {
+  const runs = getComputationRuns(contextPackId, 'scenario')
+    .filter(run => run.scenario_id === scenarioId)
+  if (runs.length === 0) return null
+  return runs.reduce((latest, current) => 
+    new Date(current.computed_at) > new Date(latest.computed_at) ? current : latest
+  )
+}
+
+export function getLatestMitigatedRun(
+  contextPackId: string,
+  scenarioId: string
+): ComputationRun | null {
+  const runs = getComputationRuns(contextPackId, 'mitigated')
+    .filter(run => run.scenario_id === scenarioId)
+  if (runs.length === 0) return null
+  return runs.reduce((latest, current) => 
+    new Date(current.computed_at) > new Date(latest.computed_at) ? current : latest
+  )
+}
+
 // =============================================================================
 // STATE MANAGEMENT
 // =============================================================================

@@ -398,7 +398,12 @@ export function applyScenario(
  */
 export function applyMitigations(
   scenarioKpis: KPIDataPoint[],
-  mitigations: Mitigation[]
+  mitigations: Mitigation[],
+  mitigationBlend?: {
+    startIndex: number
+    endIndex: number
+    curveValues: number[]
+  }
 ): KPIDataPoint[] {
   const enabledMitigations = mitigations.filter(m => m.enabled)
   
@@ -406,7 +411,15 @@ export function applyMitigations(
     return scenarioKpis
   }
 
-  return scenarioKpis.map(kpi => {
+  const applyBlend = (ratio: number, monthIdx: number) => {
+    if (!mitigationBlend) return ratio
+    if (monthIdx < mitigationBlend.startIndex || monthIdx > mitigationBlend.endIndex) return ratio
+    const curveIndex = monthIdx - mitigationBlend.startIndex
+    const blendToBaseline = mitigationBlend.curveValues[curveIndex] ?? 0
+    return ratio * (1 - blendToBaseline) + 1 * blendToBaseline
+  }
+
+  return scenarioKpis.map((kpi, monthIdx) => {
     let modifiedKpi = { ...kpi }
 
     for (const mitigation of enabledMitigations) {
@@ -422,7 +435,7 @@ export function applyMitigations(
               : mod.modification_type === 'decrease'
               ? 1 - (mod.target_value / 100)
               : mod.target_value / modifiedKpi.total_revenue
-            modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * revenueChange)
+            modifiedKpi.total_revenue = Math.round(modifiedKpi.total_revenue * applyBlend(revenueChange, monthIdx))
             break
             
           case 'food_cost':
@@ -434,7 +447,7 @@ export function applyMitigations(
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
               : mod.target_value / modifiedKpi.cost_of_goods_sold
-            modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * cogsChange)
+            modifiedKpi.cost_of_goods_sold = Math.round(modifiedKpi.cost_of_goods_sold * applyBlend(cogsChange, monthIdx))
             break
             
           case 'labor_hours':
@@ -446,7 +459,7 @@ export function applyMitigations(
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
               : mod.target_value / modifiedKpi.wage_costs
-            modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * wageChange)
+            modifiedKpi.wage_costs = Math.round(modifiedKpi.wage_costs * applyBlend(wageChange, monthIdx))
             break
             
           case 'rent':
@@ -458,7 +471,7 @@ export function applyMitigations(
               : mod.modification_type === 'increase'
               ? 1 + (mod.target_value / 100)
               : mod.target_value / modifiedKpi.operating_expenses
-            modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * opexChange)
+            modifiedKpi.operating_expenses = Math.round(modifiedKpi.operating_expenses * applyBlend(opexChange, monthIdx))
             break
         }
       }
@@ -553,7 +566,35 @@ export function computeMitigated(
   baselineRun: ComputationRun,
   scenarioRun: ComputationRun
 ): ComputationRun {
-  const mitigatedKpis = applyMitigations(scenarioRun.kpi_results, mitigations)
+  const shockWindows = scenario.assumption_shocks
+    .map(shock => {
+      const startIndex = resolveShockStartIndex(shock, baselineRun.kpi_results)
+      const endIndex = Math.min(
+        baselineRun.kpi_results.length - 1,
+        resolveShockEndIndex(shock, baselineRun.kpi_results, startIndex)
+      )
+      return { startIndex, endIndex }
+    })
+    .filter(window => window.endIndex >= window.startIndex)
+
+  const mitigationBlend = (() => {
+    if (shockWindows.length === 0) return undefined
+    const startIndex = Math.min(...shockWindows.map(window => window.startIndex))
+    const endIndex = Math.max(...shockWindows.map(window => window.endIndex))
+    if (endIndex < startIndex) return undefined
+    const horizonMonths = Math.max(1, endIndex - startIndex + 1)
+    return {
+      startIndex,
+      endIndex,
+      curveValues: buildShockCurve({
+        curve: scenario.shock_curve ?? 'flat',
+        horizonMonths,
+        kpiSeries: baselineRun.kpi_results,
+      }).values,
+    }
+  })()
+
+  const mitigatedKpis = applyMitigations(scenarioRun.kpi_results, mitigations, mitigationBlend)
   const derived_results = mitigatedKpis.map(computeDerivedKpis)
 
   // Compute deltas from baseline
