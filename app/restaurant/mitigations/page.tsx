@@ -525,12 +525,35 @@ export default function MitigationsPage() {
   }
 
   const buildSurvivalSeries = (run: typeof baselineRun | null, totalMonths: number) => {
-    if (!run) return Array.from({ length: totalMonths }, (_, idx) => ({ month: idx + 1, survival: 1 }))
-    const eventMonth = run.survival?.time_to_event_months ?? null
-    return Array.from({ length: totalMonths }, (_, idx) => ({
-      month: idx + 1,
-      survival: eventMonth !== null && idx + 1 >= eventMonth ? 0 : 1,
-    }))
+    if (!run) {
+      return Array.from({ length: totalMonths }, (_, idx) => ({ month: idx + 1, survival: 1 }))
+    }
+
+    const netProfits = run.kpi_results.map(point => point.net_profit)
+    const netMargins = run.derived_results.map(point => point.net_margin)
+    const avg = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0)
+    const variance = (values: number[]) => {
+      const mean = avg(values)
+      return avg(values.map(value => (value - mean) ** 2))
+    }
+    const stdDev = (values: number[]) => Math.sqrt(variance(values))
+    const profitScale = Math.max(stdDev(netProfits), 1)
+    const marginScale = Math.max(stdDev(netMargins), 0.5)
+    const sigmoid = (value: number) => 1 / (1 + Math.exp(-value))
+
+    let survival = 1
+
+    return netProfits.map((netProfit, idx) => {
+      const margin = netMargins[idx] ?? 0
+      const profitSignal = -netProfit / profitScale
+      const marginSignal = -margin / marginScale
+      const hazard = sigmoid((profitSignal + marginSignal) / 2) * 0.25
+      survival *= 1 - hazard
+      return {
+        month: idx + 1,
+        survival: Math.max(0.05, Math.min(0.98, survival)),
+      }
+    })
   }
 
   const survivalChartData = useMemo(() => {
@@ -1002,7 +1025,7 @@ export default function MitigationsPage() {
           <CardHeader>
             <CardTitle className="text-base">Survival Analysis</CardTitle>
             <CardDescription>
-              Probability of staying above the net profit threshold (event defined as net profit below {baselineRun?.survival?.threshold ?? 0} for {baselineRun?.survival?.consecutive_months ?? 2} consecutive months).
+              Modeled probability of staying above the net profit threshold (event defined as net profit below {baselineRun?.survival?.threshold ?? 0} for {baselineRun?.survival?.consecutive_months ?? 2} consecutive months).
             </CardDescription>
           </CardHeader>
           <CardContent className="h-72">
