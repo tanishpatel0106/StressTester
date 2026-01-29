@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Switch } from "@/components/ui/switch"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { 
   Sparkles,
   ArrowRight,
@@ -24,9 +26,10 @@ import {
   getLatestBaseline,
   getLatestMitigatedRun,
   getLatestScenarioRun,
+  getComputationRuns,
 } from "@/lib/restaurant/storage"
 import { generateMitigations } from "@/lib/restaurant/ai-client"
-import { computeMitigated, formatCurrency, formatDelta, formatPercent } from "@/lib/restaurant/engine"
+import { computeMitigated, formatCurrency, formatDelta, formatPercent, runMitigationMonteCarlo } from "@/lib/restaurant/engine"
 import type { Mitigation, MitigationSet, KPIName, DerivedKPIName } from "@/lib/restaurant/types"
 import {
   LineChart,
@@ -37,7 +40,34 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ScatterChart,
+  Scatter,
+  ZAxis,
 } from "recharts"
+
+const BUNDLE_OPTIONS = ["A", "B", "C"] as const
+const DRIVER_SLIDER_BOUNDS: Record<
+  string,
+  {
+    min: number
+    max: number
+    step: number
+  }
+> = {
+  menu_price: { min: 0, max: 25, step: 0.5 },
+  average_check: { min: 0, max: 25, step: 0.5 },
+  covers: { min: 0, max: 25, step: 0.5 },
+  food_cost: { min: 0, max: 20, step: 0.5 },
+  supplier_cost: { min: 0, max: 20, step: 0.5 },
+  portion_size: { min: 0, max: 20, step: 0.5 },
+  labor_hours: { min: 0, max: 25, step: 0.5 },
+  hourly_rate: { min: 0, max: 25, step: 0.5 },
+  staff_count: { min: 0, max: 25, step: 0.5 },
+  rent: { min: 0, max: 15, step: 0.5 },
+  utilities: { min: 0, max: 15, step: 0.5 },
+  marketing: { min: 0, max: 15, step: 0.5 },
+  default: { min: 0, max: 25, step: 0.5 },
+}
 
 export default function MitigationsPage() {
   const searchParams = useSearchParams()
@@ -51,8 +81,15 @@ export default function MitigationsPage() {
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null)
   const [diffMode, setDiffMode] = useState(false)
   const [diffReference, setDiffReference] = useState<"baseline" | "scenario" | "mitigated">("baseline")
+  const [comparisonMode, setComparisonMode] = useState<"baseline-scenario" | "scenario-mitigated" | "baseline-mitigated">("baseline-mitigated")
+  const [activeBundle, setActiveBundle] = useState<"A" | "B" | "C">("A")
+  const [bundleSelections, setBundleSelections] = useState<Record<string, Record<"A" | "B" | "C", string[]>>>({})
 
   const state = getRestaurantState(contextPackId || '')
+  const contextPack = state?.context_pack
+  const assumptionSet = state?.assumption_set
+  const scenarioSet = state?.scenario_set
+  const mitigationSet = state?.mitigation_set
   const baselineRun = contextPackId ? getLatestBaseline(contextPackId) : null
 
   const scenarioRun = useMemo(() => {
@@ -65,31 +102,99 @@ export default function MitigationsPage() {
     return getLatestMitigatedRun(contextPackId, selectedScenarioId)
   }, [contextPackId, selectedScenarioId, state?.mitigated_computations])
 
+  const bundleMitigations = useMemo(() => {
+    if (!selectedScenarioId) return { A: [], B: [], C: [] }
+    const currentMitigations = localMitigations || mitigationSet?.mitigations || []
+    const scenarioMitigations = currentMitigations.filter(m => m.scenario_id === selectedScenarioId)
+    const defaultEnabledIds = scenarioMitigations.filter(m => m.enabled).map(m => m.id)
+    const selection = bundleSelections[selectedScenarioId]
+    return BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const enabledIds = new Set(selection?.[bundleId] ?? defaultEnabledIds)
+      acc[bundleId] = scenarioMitigations.map(mitigation => ({
+        ...mitigation,
+        enabled: enabledIds.has(mitigation.id),
+      }))
+      return acc
+    }, {} as Record<"A" | "B" | "C", Mitigation[]>)
+  }, [bundleSelections, localMitigations, mitigationSet?.mitigations, selectedScenarioId])
+
   // Calculate mitigated results
   const mitigatedResult = useMemo(() => {
-    if (!selectedScenarioId || !state?.context_pack || !baselineRun || !scenarioRun) return null
+    if (!selectedScenarioId || !contextPack || !baselineRun || !scenarioRun) return null
     
-    const mitigations = localMitigations || state.mitigation_set?.mitigations || []
-    const scenarioMitigations = mitigations.filter(m => m.scenario_id === selectedScenarioId && m.enabled)
-    const scenario = state.scenario_set?.scenarios.find(s => s.id === selectedScenarioId)
+    const scenarioMitigations = bundleMitigations[activeBundle]?.filter(m => m.enabled) || []
+    const scenario = scenarioSet?.scenarios.find(s => s.id === selectedScenarioId)
     
     if (!scenario || !scenarioRun || scenarioMitigations.length === 0) return null
     
     return computeMitigated(
-      state.context_pack,
-      state.assumption_set?.assumptions || [],
+      contextPack,
+      assumptionSet?.assumptions || [],
       scenario,
       scenarioMitigations,
       baselineRun,
       scenarioRun
     )
-  }, [selectedScenarioId, state, localMitigations, baselineRun, scenarioRun])
+  }, [activeBundle, assumptionSet?.assumptions, baselineRun, bundleMitigations, contextPack, scenarioRun, scenarioSet?.scenarios, selectedScenarioId])
+
+  const storedBundleRuns = useMemo(() => {
+    if (!contextPackId || !selectedScenarioId) return { A: null, B: null, C: null }
+    const runs = getComputationRuns(contextPackId, 'mitigated')
+      .filter(run => run.scenario_id === selectedScenarioId)
+    return BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const bundleRuns = runs.filter(run => run.mitigation_ids?.includes(`bundle:${bundleId}`))
+      if (bundleRuns.length === 0) {
+        acc[bundleId] = null
+        return acc
+      }
+      acc[bundleId] = bundleRuns.reduce((latest, current) =>
+        new Date(current.computed_at) > new Date(latest.computed_at) ? current : latest
+      )
+      return acc
+    }, {} as Record<"A" | "B" | "C", typeof storedMitigatedRun>)
+  }, [contextPackId, selectedScenarioId, state?.mitigated_computations])
+
+  const bundleRuns = useMemo(() => {
+    if (!selectedScenarioId || !contextPack || !baselineRun || !scenarioRun) {
+      return { A: null, B: null, C: null }
+    }
+    const scenario = scenarioSet?.scenarios.find(s => s.id === selectedScenarioId)
+    if (!scenario) return { A: null, B: null, C: null }
+
+    return BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const mitigationsForBundle = bundleMitigations[bundleId]?.filter(m => m.enabled) || []
+      if (mitigationsForBundle.length === 0) {
+        acc[bundleId] = storedBundleRuns[bundleId] || null
+        return acc
+      }
+      const run = computeMitigated(
+        contextPack,
+        assumptionSet?.assumptions || [],
+        scenario,
+        mitigationsForBundle,
+        baselineRun,
+        scenarioRun
+      )
+      acc[bundleId] = {
+        ...run,
+        id: `CR_mitigated_${scenario.id}_${bundleId}_${Date.now()}`,
+        mitigation_ids: [...(run.mitigation_ids || []), `bundle:${bundleId}`],
+        computed_at: new Date().toISOString(),
+      }
+      return acc
+    }, {} as Record<"A" | "B" | "C", typeof storedMitigatedRun>)
+  }, [assumptionSet?.assumptions, baselineRun, bundleMitigations, contextPack, scenarioRun, scenarioSet?.scenarios, selectedScenarioId, storedBundleRuns])
+
+  const activeBundleRun = bundleRuns[activeBundle] || storedBundleRuns[activeBundle] || storedMitigatedRun
 
   useEffect(() => {
-    if (mitigatedResult) {
-      saveComputationRun(mitigatedResult)
-    }
-  }, [mitigatedResult])
+    BUNDLE_OPTIONS.forEach(bundleId => {
+      const run = bundleRuns[bundleId]
+      if (run) {
+        saveComputationRun(run)
+      }
+    })
+  }, [bundleRuns])
 
   if (!contextPackId) {
     return (
@@ -104,7 +209,7 @@ export default function MitigationsPage() {
     )
   }
   
-  if (!state?.context_pack) {
+  if (!contextPack) {
     return (
       <div className="flex items-center justify-center h-64">
         <Card className="p-6 text-center">
@@ -117,8 +222,48 @@ export default function MitigationsPage() {
     )
   }
 
+  const scenarios = scenarioSet?.scenarios || []
+  const assumptions = assumptionSet?.assumptions || []
+  const mitigations = localMitigations || mitigationSet?.mitigations || []
+  const status = mitigationSet?.status
+  const isCurrentlyApproved = isApproved || status === 'approved'
+
+  // Select first scenario by default
+  if (!selectedScenarioId && scenarios.length > 0) {
+    setSelectedScenarioId(scenarios[0].id)
+  }
+
+  useEffect(() => {
+    if (!selectedScenarioId) return
+    const scenarioMitigations = mitigations.filter(m => m.scenario_id === selectedScenarioId)
+    if (scenarioMitigations.length === 0) return
+    const defaultEnabledIds = scenarioMitigations.filter(m => m.enabled).map(m => m.id)
+    const scenarioIds = scenarioMitigations.map(m => m.id)
+
+    setBundleSelections(prev => {
+      const existing = prev[selectedScenarioId]
+      const nextBundles = BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+        const current = existing?.[bundleId]
+        const currentSet = new Set(current ?? defaultEnabledIds)
+        const merged = scenarioIds.filter(id => currentSet.has(id))
+        scenarioMitigations.forEach(mit => {
+          if (mit.enabled && !currentSet.has(mit.id)) {
+            merged.push(mit.id)
+          }
+        })
+        acc[bundleId] = Array.from(new Set(merged))
+        return acc
+      }, {} as Record<"A" | "B" | "C", string[]>)
+
+      return {
+        ...prev,
+        [selectedScenarioId]: nextBundles,
+      }
+    })
+  }, [mitigations, selectedScenarioId])
+
   // Check for approved scenarios
-  const hasApprovedScenarios = state.scenario_set?.status === 'approved'
+  const hasApprovedScenarios = scenarioSet?.status === 'approved'
   
   if (!hasApprovedScenarios) {
     return (
@@ -141,17 +286,6 @@ export default function MitigationsPage() {
         </Button>
       </div>
     )
-  }
-
-  const scenarios = state.scenario_set?.scenarios || []
-  const assumptions = state.assumption_set?.assumptions || []
-  const mitigations = localMitigations || state.mitigation_set?.mitigations || []
-  const status = state.mitigation_set?.status
-  const isCurrentlyApproved = isApproved || status === 'approved'
-
-  // Select first scenario by default
-  if (!selectedScenarioId && scenarios.length > 0) {
-    setSelectedScenarioId(scenarios[0].id)
   }
 
   const handleGenerate = async () => {
@@ -177,10 +311,10 @@ export default function MitigationsPage() {
       const newSet: MitigationSet = {
         id: `MS_${Date.now()}`,
         context_pack_id: contextPackId,
-        scenario_set_id: state.scenario_set?.id || '',
+        scenario_set_id: scenarioSet?.id || '',
         mitigations: newMitigations,
         status: 'draft',
-        version: (state.mitigation_set?.version || 0) + 1,
+        version: (mitigationSet?.version || 0) + 1,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }
@@ -196,32 +330,64 @@ export default function MitigationsPage() {
     }
   }
 
-  const handleToggleMitigation = (mitigationId: string) => {
-    const updated = mitigations.map(m => 
-      m.id === mitigationId ? { ...m, enabled: !m.enabled } : m
-    )
-    setLocalMitigations(updated)
+  const handleToggleBundleMitigation = (bundleId: "A" | "B" | "C", mitigationId: string) => {
+    if (!selectedScenarioId || isCurrentlyApproved) return
+    setBundleSelections(prev => {
+      const currentScenario = prev[selectedScenarioId] || { A: [], B: [], C: [] }
+      const currentBundle = new Set(currentScenario[bundleId] || [])
+      if (currentBundle.has(mitigationId)) {
+        currentBundle.delete(mitigationId)
+      } else {
+        currentBundle.add(mitigationId)
+      }
+      return {
+        ...prev,
+        [selectedScenarioId]: {
+          ...currentScenario,
+          [bundleId]: Array.from(currentBundle),
+        },
+      }
+    })
+  }
+
+  const handleUpdateDriverModification = (
+    mitigationId: string,
+    modIndex: number,
+    value: number
+  ) => {
+    setLocalMitigations(prev => {
+      const source = prev || mitigations
+      return source.map(mitigation => {
+        if (mitigation.id !== mitigationId) return mitigation
+        const updatedMods = mitigation.driver_modifications.map((mod, idx) =>
+          idx === modIndex ? { ...mod, target_value: value } : mod
+        )
+        return { ...mitigation, driver_modifications: updatedMods }
+      })
+    })
   }
 
   const handleApprove = () => {
-    const approvedMitigations = mitigations.map(m => ({ ...m, approved: true, approved_at: new Date().toISOString() }))
+    const bundleEnabledIds = selectedScenarioId
+      ? new Set(bundleSelections[selectedScenarioId]?.[activeBundle] || [])
+      : null
+    const approvedMitigations = mitigations.map(m => {
+      const isScenarioMatch = selectedScenarioId && m.scenario_id === selectedScenarioId
+      const nextEnabled = isScenarioMatch && bundleEnabledIds ? bundleEnabledIds.has(m.id) : m.enabled
+      return { ...m, enabled: nextEnabled, approved: true, approved_at: new Date().toISOString() }
+    })
     
     const approvedSet: MitigationSet = {
-      id: state.mitigation_set?.id || `MS_${Date.now()}`,
+      id: mitigationSet?.id || `MS_${Date.now()}`,
       context_pack_id: contextPackId,
-      scenario_set_id: state.scenario_set?.id || '',
+      scenario_set_id: scenarioSet?.id || '',
       mitigations: approvedMitigations,
       status: 'approved',
-      version: state.mitigation_set?.version || 1,
-      created_at: state.mitigation_set?.created_at || new Date().toISOString(),
+      version: mitigationSet?.version || 1,
+      created_at: mitigationSet?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
     }
     saveMitigationSet(approvedSet)
-    
-    // Save mitigated computation
-    if (mitigatedResult) {
-      saveComputationRun(mitigatedResult)
-    }
     
     setLocalMitigations(approvedMitigations)
     setIsApproved(true)
@@ -229,7 +395,23 @@ export default function MitigationsPage() {
 
   const selectedScenario = scenarios.find(s => s.id === selectedScenarioId)
   const scenarioMitigations = mitigations.filter(m => m.scenario_id === selectedScenarioId)
-  const activeMitigatedRun = mitigatedResult || storedMitigatedRun
+  const activeMitigatedRun = mitigatedResult || activeBundleRun
+
+  const costBenefitData = useMemo(() => {
+    return scenarioMitigations.map(mitigation => {
+      const totalCost = mitigation.driver_modifications.reduce((sum, mod) => sum + mod.implementation_cost, 0)
+      const improvement = mitigation.expected_impact.net_profit_change
+      const roi = totalCost > 0 ? improvement / totalCost : 0
+      return {
+        id: mitigation.id,
+        name: mitigation.name,
+        category: mitigation.category.replace('_', ' '),
+        cost: totalCost,
+        improvement,
+        roi,
+      }
+    })
+  }, [scenarioMitigations])
 
   const alignedSeries = useMemo(() => {
     if (!baselineRun || !scenarioRun) return null
@@ -240,6 +422,7 @@ export default function MitigationsPage() {
       const mitigatedKpi = activeMitigatedRun?.kpi_results[idx] || scenarioKpi
       const mitigatedDerived = activeMitigatedRun?.derived_results[idx] || scenarioDerived
       return {
+        index: idx,
         date: baselineKpi.date,
         baselineKpi,
         scenarioKpi,
@@ -304,6 +487,14 @@ export default function MitigationsPage() {
 
       const primeCost = (kpi: typeof point.baselineKpi) => kpi.cost_of_goods_sold + kpi.wage_costs
       const applyDiff = (value: number, referenceValue: number) => (diffMode ? value - referenceValue : value)
+      const getBundleKpi = (bundleId: "A" | "B" | "C") => {
+        const run = bundleRuns[bundleId] || storedBundleRuns[bundleId]
+        return run?.kpi_results[point.index] || point.mitigatedKpi
+      }
+      const getBundleDerived = (bundleId: "A" | "B" | "C") => {
+        const run = bundleRuns[bundleId] || storedBundleRuns[bundleId]
+        return run?.derived_results[point.index] || point.mitigatedDerived
+      }
 
       return {
         date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
@@ -319,9 +510,21 @@ export default function MitigationsPage() {
         baselineGrossMargin: applyDiff(point.baselineDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
         scenarioGrossMargin: applyDiff(point.scenarioDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
         mitigatedGrossMargin: applyDiff(point.mitigatedDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
+        bundleARevenue: applyDiff(getBundleKpi("A").total_revenue, referenceKpi.total_revenue),
+        bundleBRevenue: applyDiff(getBundleKpi("B").total_revenue, referenceKpi.total_revenue),
+        bundleCRevenue: applyDiff(getBundleKpi("C").total_revenue, referenceKpi.total_revenue),
+        bundleANetProfit: applyDiff(getBundleKpi("A").net_profit, referenceKpi.net_profit),
+        bundleBNetProfit: applyDiff(getBundleKpi("B").net_profit, referenceKpi.net_profit),
+        bundleCNetProfit: applyDiff(getBundleKpi("C").net_profit, referenceKpi.net_profit),
+        bundleAPrimeCost: applyDiff(primeCost(getBundleKpi("A")), primeCost(referenceKpi)),
+        bundleBPrimeCost: applyDiff(primeCost(getBundleKpi("B")), primeCost(referenceKpi)),
+        bundleCPrimeCost: applyDiff(primeCost(getBundleKpi("C")), primeCost(referenceKpi)),
+        bundleAGrossMargin: applyDiff(getBundleDerived("A").gross_margin_pct, referenceDerived.gross_margin_pct),
+        bundleBGrossMargin: applyDiff(getBundleDerived("B").gross_margin_pct, referenceDerived.gross_margin_pct),
+        bundleCGrossMargin: applyDiff(getBundleDerived("C").gross_margin_pct, referenceDerived.gross_margin_pct),
       }
     })
-  }, [alignedSeries, diffMode, diffReference])
+  }, [alignedSeries, bundleRuns, diffMode, diffReference, storedBundleRuns])
 
   const diffLabel = diffReference === "baseline"
     ? "Baseline"
@@ -329,9 +532,185 @@ export default function MitigationsPage() {
       ? "Stressed"
       : "Mitigated"
 
+  const comparisonLabel = comparisonMode === "baseline-scenario"
+    ? "Stressed vs Baseline"
+    : comparisonMode === "scenario-mitigated"
+      ? "Mitigated vs Stressed"
+      : "Mitigated vs Baseline"
+
   const formatCurrencyDelta = (value: number) => {
     const sign = value >= 0 ? "+" : "-"
     return `${sign}${formatCurrency(Math.abs(value))}`
+  }
+
+  const buildSurvivalSeries = (run: typeof baselineRun | null, totalMonths: number) => {
+    if (!run) {
+      return Array.from({ length: totalMonths }, (_, idx) => ({ month: idx + 1, survival: 1 }))
+    }
+
+    const netProfits = run.kpi_results.map(point => point.net_profit)
+    const netMargins = run.derived_results.map(point => point.net_margin)
+    const avg = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0)
+    const variance = (values: number[]) => {
+      const mean = avg(values)
+      return avg(values.map(value => (value - mean) ** 2))
+    }
+    const stdDev = (values: number[]) => Math.sqrt(variance(values))
+    const profitScale = Math.max(stdDev(netProfits), 1)
+    const marginScale = Math.max(stdDev(netMargins), 0.5)
+    const sigmoid = (value: number) => 1 / (1 + Math.exp(-value))
+
+    let survival = 1
+
+    return netProfits.map((netProfit, idx) => {
+      const margin = netMargins[idx] ?? 0
+      const profitSignal = -netProfit / profitScale
+      const marginSignal = -margin / marginScale
+      const hazard = sigmoid((profitSignal + marginSignal) / 2) * 0.25
+      survival *= 1 - hazard
+      return {
+        month: idx + 1,
+        survival: Math.max(0.05, Math.min(0.98, survival)),
+      }
+    })
+  }
+
+  const survivalChartData = useMemo(() => {
+    if (!baselineRun) return []
+    const totalMonths = baselineRun.kpi_results.length
+    const baselineSeries = buildSurvivalSeries(baselineRun, totalMonths)
+    const scenarioSeries = buildSurvivalSeries(scenarioRun, totalMonths)
+    const bundleSeries = BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const run = bundleRuns[bundleId] || storedBundleRuns[bundleId] || storedMitigatedRun
+      acc[bundleId] = buildSurvivalSeries(run, totalMonths)
+      return acc
+    }, {} as Record<"A" | "B" | "C", { month: number; survival: number }[]>)
+
+    return baselineSeries.map((point, idx) => ({
+      month: `M${point.month}`,
+      baseline: point.survival,
+      scenario: scenarioSeries[idx]?.survival ?? point.survival,
+      bundleA: bundleSeries.A[idx]?.survival ?? point.survival,
+      bundleB: bundleSeries.B[idx]?.survival ?? point.survival,
+      bundleC: bundleSeries.C[idx]?.survival ?? point.survival,
+    }))
+  }, [baselineRun, bundleRuns, scenarioRun, storedBundleRuns, storedMitigatedRun])
+
+  const computeRunFeatures = (run: typeof baselineRun | null) => {
+    if (!run) {
+      return {
+        revenueTrend: 0,
+        netMarginVolatility: 0,
+        avgNetMargin: 0,
+        primeCostPctAvg: 0,
+      }
+    }
+
+    const netMargins = run.derived_results.map(point => point.net_margin)
+    const primeCostPcts = run.derived_results.map(point => point.prime_cost_pct)
+    const revenues = run.kpi_results.map(point => point.total_revenue)
+
+    const avg = (values: number[]) => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0)
+    const variance = (values: number[]) => {
+      const mean = avg(values)
+      return avg(values.map(value => (value - mean) ** 2))
+    }
+
+    const revenueTrend = revenues.length > 1
+      ? (revenues[revenues.length - 1] - revenues[0]) / Math.max(revenues[0], 1)
+      : 0
+
+    return {
+      revenueTrend,
+      netMarginVolatility: Math.sqrt(variance(netMargins)),
+      avgNetMargin: avg(netMargins),
+      primeCostPctAvg: avg(primeCostPcts),
+    }
+  }
+
+  const coxCoefficients = {
+    revenueTrend: -0.8,
+    netMarginVolatility: 1.2,
+    avgNetMargin: -1.5,
+    primeCostPctAvg: 1.1,
+  }
+
+  const computeRiskScore = (run: typeof baselineRun | null) => {
+    const features = computeRunFeatures(run)
+    const score = Object.entries(coxCoefficients).reduce((total, [key, weight]) => {
+      return total + features[key as keyof typeof features] * weight
+    }, 0)
+    return { score, features }
+  }
+
+  const riskScores = useMemo(() => {
+    const baselineScore = computeRiskScore(baselineRun)
+    const scenarioScore = computeRiskScore(scenarioRun)
+    const bundleScores = BUNDLE_OPTIONS.reduce((acc, bundleId) => {
+      const run = bundleRuns[bundleId] || storedBundleRuns[bundleId] || storedMitigatedRun
+      acc[bundleId] = computeRiskScore(run)
+      return acc
+    }, {} as Record<"A" | "B" | "C", ReturnType<typeof computeRiskScore>>)
+
+    return {
+      baseline: baselineScore,
+      scenario: scenarioScore,
+      bundles: bundleScores,
+    }
+  }, [baselineRun, bundleRuns, scenarioRun, storedBundleRuns, storedMitigatedRun])
+
+  const monteCarloStats = useMemo(() => {
+    if (!contextPack || !baselineRun || !scenarioRun || !selectedScenarioId) return null
+    const scenario = scenarioSet?.scenarios.find(item => item.id === selectedScenarioId)
+    if (!scenario) return null
+    const mitigationsForBundle = bundleMitigations[activeBundle]?.filter(m => m.enabled) || []
+    if (mitigationsForBundle.length === 0) return null
+    return runMitigationMonteCarlo({
+      contextPack,
+      assumptions: assumptionSet?.assumptions || [],
+      scenario,
+      mitigations: mitigationsForBundle,
+      baselineRun,
+      scenarioRun,
+      iterations: 200,
+      volatility: 0.2,
+    })
+  }, [
+    activeBundle,
+    assumptionSet?.assumptions,
+    baselineRun,
+    bundleMitigations,
+    contextPack,
+    scenarioRun,
+    scenarioSet?.scenarios,
+    selectedScenarioId,
+  ])
+
+  const getComparisonValues = (baselineValue: number, scenarioValue: number, mitigatedValue?: number) => {
+    if (comparisonMode === "baseline-scenario") {
+      return { reference: baselineValue, comparison: scenarioValue }
+    }
+    if (comparisonMode === "scenario-mitigated") {
+      return { reference: scenarioValue, comparison: mitigatedValue }
+    }
+    return { reference: baselineValue, comparison: mitigatedValue }
+  }
+
+  const isMitigationEnabled = (bundleId: "A" | "B" | "C", mitigationId: string, fallback = false) => {
+    if (!selectedScenarioId) return fallback
+    const selection = bundleSelections[selectedScenarioId]?.[bundleId]
+    if (!selection) return fallback
+    return selection.includes(mitigationId)
+  }
+
+  const clampValue = (value: number, min: number, max: number) =>
+    Math.min(Math.max(value, min), max)
+
+  const getModificationRange = (driver: string, modificationType: string) => {
+    if (modificationType === "replace") {
+      return { min: 0, max: 100, step: 5 }
+    }
+    return DRIVER_SLIDER_BOUNDS[driver] || DRIVER_SLIDER_BOUNDS.default
   }
 
   const categoryColor = (cat: string) => {
@@ -458,18 +837,231 @@ export default function MitigationsPage() {
                 </div>
                 <div className="text-center p-3 rounded-lg bg-background">
                   <p className="text-xs text-muted-foreground">Mitigated Revenue</p>
-                  <p className={`text-lg font-bold ${(mitigatedResult?.summary.total_revenue_change_pct || scenarioRun.summary.total_revenue_change_pct) < 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
-                    {mitigatedResult ? formatDelta(mitigatedResult.summary.total_revenue_change_pct) : '-'}
+                  <p className={`text-lg font-bold ${(activeMitigatedRun?.summary.total_revenue_change_pct || scenarioRun.summary.total_revenue_change_pct) < 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                    {activeMitigatedRun ? formatDelta(activeMitigatedRun.summary.total_revenue_change_pct) : '-'}
                   </p>
                 </div>
                 <div className="text-center p-3 rounded-lg bg-background">
                   <p className="text-xs text-muted-foreground">Mitigated Net Profit</p>
-                  <p className={`text-lg font-bold ${(mitigatedResult?.summary.net_profit_change_pct || scenarioRun.summary.net_profit_change_pct) < 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
-                    {mitigatedResult ? formatDelta(mitigatedResult.summary.net_profit_change_pct) : '-'}
+                  <p className={`text-lg font-bold ${(activeMitigatedRun?.summary.net_profit_change_pct || scenarioRun.summary.net_profit_change_pct) < 0 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                    {activeMitigatedRun ? formatDelta(activeMitigatedRun.summary.net_profit_change_pct) : '-'}
                   </p>
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {selectedScenario && (
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle className="text-base">Mitigation Bundles</CardTitle>
+                <CardDescription>
+                  Group mitigations into bundles and compare outcomes side-by-side.
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-muted-foreground">Active bundle</span>
+                {BUNDLE_OPTIONS.map(bundleId => (
+                  <Button
+                    key={bundleId}
+                    size="sm"
+                    variant={activeBundle === bundleId ? "default" : "outline"}
+                    onClick={() => setActiveBundle(bundleId)}
+                  >
+                    Bundle {bundleId}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 lg:grid-cols-3">
+              {BUNDLE_OPTIONS.map(bundleId => {
+                const run = bundleRuns[bundleId] || storedBundleRuns[bundleId]
+                const enabledCount = bundleMitigations[bundleId]?.filter(m => m.enabled).length || 0
+                return (
+                  <div key={bundleId} className="rounded-lg border border-border/60 p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold">Bundle {bundleId}</p>
+                      {activeBundle === bundleId && (
+                        <Badge variant="secondary">Active</Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {enabledCount} mitigation{enabledCount === 1 ? "" : "s"} enabled
+                    </p>
+                    <div className="mt-3 grid gap-2 text-sm">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Revenue Δ</span>
+                        <span className="font-medium">
+                          {run ? formatDelta(run.summary.total_revenue_change_pct) : "-"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Net Profit Δ</span>
+                        <span className="font-medium">
+                          {run ? formatDelta(run.summary.net_profit_change_pct) : "-"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-muted-foreground">Prime Cost Δ</span>
+                        <span className="font-medium">
+                          {run ? formatDelta(run.summary.prime_cost_change_pct) : "-"}
+                        </span>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant={activeBundle === bundleId ? "secondary" : "outline"}
+                      className="mt-4 w-full"
+                      onClick={() => setActiveBundle(bundleId)}
+                    >
+                      Focus on Bundle {bundleId}
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="rounded-lg border border-border/60 p-4">
+              <p className="text-sm font-semibold">A/B/C Comparison</p>
+              <p className="text-xs text-muted-foreground mb-3">
+                Compare bundle deltas vs baseline for the selected scenario.
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                      <th className="py-2 pr-4">Bundle</th>
+                      <th className="py-2 pr-4">Enabled</th>
+                      <th className="py-2 pr-4">Revenue Δ</th>
+                      <th className="py-2 pr-4">Net Profit Δ</th>
+                      <th className="py-2 pr-4">Prime Cost Δ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {BUNDLE_OPTIONS.map(bundleId => {
+                      const run = bundleRuns[bundleId] || storedBundleRuns[bundleId]
+                      const enabledCount = bundleMitigations[bundleId]?.filter(m => m.enabled).length || 0
+                      return (
+                        <tr key={bundleId} className="border-b border-border/50">
+                          <td className="py-3 pr-4 font-medium">Bundle {bundleId}</td>
+                          <td className="py-3 pr-4">{enabledCount}</td>
+                          <td className="py-3 pr-4">
+                            {run ? formatDelta(run.summary.total_revenue_change_pct) : "-"}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {run ? formatDelta(run.summary.net_profit_change_pct) : "-"}
+                          </td>
+                          <td className="py-3 pr-4">
+                            {run ? formatDelta(run.summary.prime_cost_change_pct) : "-"}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {costBenefitData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cost-Benefit Frontier</CardTitle>
+            <CardDescription>
+              Compare mitigation implementation cost vs expected net profit impact. Higher ROI is better.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-6 lg:grid-cols-2">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <ScatterChart>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="cost" name="Cost" tickFormatter={value => formatCurrency(value)} />
+                  <YAxis dataKey="improvement" name="Net profit impact" tickFormatter={value => formatDelta(value)} />
+                  <ZAxis dataKey="roi" range={[60, 200]} name="ROI" />
+                  <Tooltip
+                    formatter={(value: number, name: string) => {
+                      if (name === "Cost") return formatCurrency(value)
+                      if (name === "Net profit impact") return formatDelta(value)
+                      if (name === "ROI") return value.toFixed(2)
+                      return value
+                    }}
+                  />
+                  <Scatter data={costBenefitData} fill="#2563eb" name="Mitigations" />
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">Mitigation</th>
+                    <th className="py-2 pr-4">Cost</th>
+                    <th className="py-2 pr-4">Net Profit Δ</th>
+                    <th className="py-2 pr-4">ROI</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {costBenefitData.map(item => (
+                    <tr key={item.id} className="border-b border-border/50">
+                      <td className="py-3 pr-4">
+                        <div className="font-medium text-foreground">{item.name}</div>
+                        <div className="text-xs text-muted-foreground">{item.category}</div>
+                      </td>
+                      <td className="py-3 pr-4">{formatCurrency(item.cost)}</td>
+                      <td className="py-3 pr-4">{formatDelta(item.improvement)}</td>
+                      <td className="py-3 pr-4">{item.roi.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {monteCarloStats && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Monte Carlo Outcomes</CardTitle>
+            <CardDescription>
+              Distribution of outcomes from probabilistic mitigation sampling for Bundle {activeBundle}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">Metric</th>
+                    <th className="py-2 pr-4">P10</th>
+                    <th className="py-2 pr-4">P50</th>
+                    <th className="py-2 pr-4">P90</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { label: "Revenue Δ", stats: monteCarloStats.total_revenue_change_pct },
+                    { label: "Net Profit Δ", stats: monteCarloStats.net_profit_change_pct },
+                    { label: "Prime Cost Δ", stats: monteCarloStats.prime_cost_change_pct },
+                  ].map(row => (
+                    <tr key={row.label} className="border-b border-border/50">
+                      <td className="py-3 pr-4 font-medium">{row.label}</td>
+                      <td className="py-3 pr-4">{formatDelta(row.stats.p10)}</td>
+                      <td className="py-3 pr-4">{formatDelta(row.stats.p50)}</td>
+                      <td className="py-3 pr-4">{formatDelta(row.stats.p90)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -481,6 +1073,23 @@ export default function MitigationsPage() {
             <CardDescription>
               Baseline vs stressed vs mitigated outcomes with explicit denominators.
             </CardDescription>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Diff mode</span>
+              {[
+                { value: "baseline-scenario", label: "Baseline → Stressed" },
+                { value: "scenario-mitigated", label: "Stressed → Mitigated" },
+                { value: "baseline-mitigated", label: "Baseline → Mitigated" },
+              ].map(option => (
+                <Button
+                  key={option.value}
+                  size="sm"
+                  variant={comparisonMode === option.value ? "default" : "outline"}
+                  onClick={() => setComparisonMode(option.value as typeof comparisonMode)}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -491,7 +1100,7 @@ export default function MitigationsPage() {
                     <th className="py-2 pr-4">Baseline</th>
                     <th className="py-2 pr-4">Stressed</th>
                     <th className="py-2 pr-4">Mitigated</th>
-                    <th className="py-2 pr-4">Δ% (Mitigated vs Baseline)</th>
+                    <th className="py-2 pr-4">Δ% ({comparisonLabel})</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -499,9 +1108,10 @@ export default function MitigationsPage() {
                     const baselineValue = kpiComparison.baselineTotals.totals[meta.key]
                     const scenarioValue = kpiComparison.scenarioTotals.totals[meta.key]
                     const mitigatedValue = kpiComparison.mitigatedTotals?.totals[meta.key]
-                    const deltaPct = mitigatedValue === undefined || baselineValue === 0
+                    const comparison = getComparisonValues(baselineValue, scenarioValue, mitigatedValue)
+                    const deltaPct = comparison.comparison === undefined || comparison.reference === 0
                       ? null
-                      : ((mitigatedValue - baselineValue) / Math.abs(baselineValue)) * 100
+                      : ((comparison.comparison - comparison.reference) / Math.abs(comparison.reference)) * 100
                     return (
                       <tr key={meta.key} className="border-b border-border/50">
                         <td className="py-3 pr-4">
@@ -523,9 +1133,10 @@ export default function MitigationsPage() {
                     const baselineValue = kpiComparison.baselineTotals.derived[meta.key]
                     const scenarioValue = kpiComparison.scenarioTotals.derived[meta.key]
                     const mitigatedValue = kpiComparison.mitigatedTotals?.derived[meta.key]
-                    const deltaPct = mitigatedValue === undefined || baselineValue === 0
+                    const comparison = getComparisonValues(baselineValue, scenarioValue, mitigatedValue)
+                    const deltaPct = comparison.comparison === undefined || comparison.reference === 0
                       ? null
-                      : ((mitigatedValue - baselineValue) / Math.abs(baselineValue)) * 100
+                      : ((comparison.comparison - comparison.reference) / Math.abs(comparison.reference)) * 100
                     const formatter = meta.isPercent ? formatPercent : formatCurrency
                     return (
                       <tr key={meta.key} className="border-b border-border/50">
@@ -544,6 +1155,125 @@ export default function MitigationsPage() {
                       </tr>
                     )
                   })}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {survivalChartData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Survival Analysis</CardTitle>
+            <CardDescription>
+              Modeled probability of staying above the net profit threshold (event defined as net profit below {baselineRun?.survival?.threshold ?? 0} for {baselineRun?.survival?.consecutive_months ?? 2} consecutive months).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={survivalChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 12 }} domain={[0, 1]} tickFormatter={value => `${Math.round(value * 100)}%`} />
+                <Tooltip formatter={(value: number) => `${Math.round(value * 100)}%`} />
+                <Legend />
+                <Line type="stepAfter" dataKey="baseline" name="Baseline" stroke="#2563eb" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="scenario" name="Stressed" stroke="#f97316" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="bundleA" name="Bundle A" stroke="#10b981" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="bundleB" name="Bundle B" stroke="#8b5cf6" strokeWidth={2} />
+                <Line type="stepAfter" dataKey="bundleC" name="Bundle C" stroke="#14b8a6" strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {baselineRun && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Cox-Style Risk Scoring</CardTitle>
+            <CardDescription>
+              Feature-based risk scores derived from revenue trend, margin volatility, and cost mix.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-lg border border-border/60 p-4">
+                <p className="text-sm font-semibold">Feature Weights (β)</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Higher scores indicate higher hazard risk (relative comparison).
+                </p>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Revenue trend</span>
+                    <span className="font-mono">{coxCoefficients.revenueTrend.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Net margin volatility</span>
+                    <span className="font-mono">{coxCoefficients.netMarginVolatility.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Average net margin</span>
+                    <span className="font-mono">{coxCoefficients.avgNetMargin.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Prime cost % avg</span>
+                    <span className="font-mono">{coxCoefficients.primeCostPctAvg.toFixed(2)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-border/60 p-4">
+                <p className="text-sm font-semibold">Risk Score Comparison</p>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Baseline vs stressed vs bundle outcomes.
+                </p>
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span>Baseline</span>
+                    <span className="font-medium">{riskScores.baseline.score.toFixed(2)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span>Stressed</span>
+                    <span className="font-medium">{riskScores.scenario.score.toFixed(2)}</span>
+                  </div>
+                  {BUNDLE_OPTIONS.map(bundleId => (
+                    <div key={bundleId} className="flex items-center justify-between">
+                      <span>Bundle {bundleId}</span>
+                      <span className="font-medium">{riskScores.bundles[bundleId].score.toFixed(2)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
+                    <th className="py-2 pr-4">Feature</th>
+                    <th className="py-2 pr-4">Baseline</th>
+                    <th className="py-2 pr-4">Stressed</th>
+                    <th className="py-2 pr-4">Bundle A</th>
+                    <th className="py-2 pr-4">Bundle B</th>
+                    <th className="py-2 pr-4">Bundle C</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    { key: "revenueTrend", label: "Revenue trend" },
+                    { key: "netMarginVolatility", label: "Net margin volatility" },
+                    { key: "avgNetMargin", label: "Average net margin" },
+                    { key: "primeCostPctAvg", label: "Prime cost % avg" },
+                  ].map(feature => (
+                    <tr key={feature.key} className="border-b border-border/50">
+                      <td className="py-3 pr-4 font-medium">{feature.label}</td>
+                      <td className="py-3 pr-4">{riskScores.baseline.features[feature.key as keyof typeof riskScores.baseline.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.scenario.features[feature.key as keyof typeof riskScores.scenario.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.bundles.A.features[feature.key as keyof typeof riskScores.bundles.A.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.bundles.B.features[feature.key as keyof typeof riskScores.bundles.B.features].toFixed(2)}</td>
+                      <td className="py-3 pr-4">{riskScores.bundles.C.features[feature.key as keyof typeof riskScores.bundles.C.features].toFixed(2)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -603,7 +1333,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselineRevenue" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioRevenue" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedRevenue" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleARevenue" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBRevenue" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCRevenue" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -621,7 +1353,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselineNetProfit" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioNetProfit" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedNetProfit" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleANetProfit" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBNetProfit" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCNetProfit" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -639,7 +1373,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselinePrimeCost" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioPrimeCost" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedPrimeCost" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleAPrimeCost" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBPrimeCost" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCPrimeCost" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -657,7 +1393,9 @@ export default function MitigationsPage() {
                   <Legend />
                   <Line type="monotone" dataKey="baselineGrossMargin" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
                   <Line type="monotone" dataKey="scenarioGrossMargin" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedGrossMargin" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleAGrossMargin" name={`Bundle A${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleBGrossMargin" name={`Bundle B${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#8b5cf6" strokeWidth={2} />
+                  <Line type="monotone" dataKey="bundleCGrossMargin" name={`Bundle C${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#14b8a6" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -691,14 +1429,16 @@ export default function MitigationsPage() {
 
       {scenarioMitigations.length > 0 && (
         <div className="grid gap-4">
-          {scenarioMitigations.map((mitigation) => (
-            <Card key={mitigation.id} className={mitigation.enabled ? 'ring-1 ring-primary/30' : 'opacity-70'}>
+          {scenarioMitigations.map((mitigation) => {
+            const isActiveEnabled = isMitigationEnabled(activeBundle, mitigation.id, mitigation.enabled)
+            return (
+            <Card key={mitigation.id} className={isActiveEnabled ? 'ring-1 ring-primary/30' : 'opacity-70'}>
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2">
                     <Switch
-                      checked={mitigation.enabled}
-                      onCheckedChange={() => handleToggleMitigation(mitigation.id)}
+                      checked={isActiveEnabled}
+                      onCheckedChange={() => handleToggleBundleMitigation(activeBundle, mitigation.id)}
                       disabled={isCurrentlyApproved}
                     />
                     <Badge variant="outline" className="font-mono text-xs">
@@ -711,30 +1451,88 @@ export default function MitigationsPage() {
                   </Badge>
                 </div>
                 <CardDescription>{mitigation.description}</CardDescription>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Bundles</span>
+                  {BUNDLE_OPTIONS.map(bundleId => {
+                    const enabled = isMitigationEnabled(bundleId, mitigation.id, mitigation.enabled)
+                    return (
+                      <Button
+                        key={bundleId}
+                        size="sm"
+                        variant={enabled ? "default" : "outline"}
+                        onClick={() => handleToggleBundleMitigation(bundleId, mitigation.id)}
+                        disabled={isCurrentlyApproved}
+                      >
+                        {bundleId}
+                      </Button>
+                    )
+                  })}
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Driver Modifications */}
                 <div>
                   <p className="text-xs font-medium text-muted-foreground mb-2">Driver Modifications:</p>
                   <div className="grid gap-2 md:grid-cols-2">
-                    {mitigation.driver_modifications.map((mod, idx) => (
-                      <div key={idx} className="flex items-center justify-between p-2 rounded bg-muted/50">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="text-xs">
-                            {mod.driver}
-                          </Badge>
-                          <span className="text-sm">
-                            {mod.modification_type} {mod.target_value}{mod.unit}
-                          </span>
+                    {mitigation.driver_modifications.map((mod, idx) => {
+                      const range = getModificationRange(mod.driver, mod.modification_type)
+                      const clampedValue = clampValue(mod.target_value, range.min, range.max)
+                      const inputId = `${mitigation.id}-${mod.driver}-${idx}`
+                      return (
+                        <div key={idx} className="rounded bg-muted/50 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Badge variant="secondary" className="text-xs">
+                                {mod.driver}
+                              </Badge>
+                              <span className="text-sm">
+                                {mod.modification_type} {mod.target_value}{mod.unit}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <DollarSign className="h-3 w-3" />
+                              {formatCurrency(mod.implementation_cost)}
+                              <Clock className="h-3 w-3 ml-2" />
+                              {mod.time_to_implement_days}d
+                            </div>
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <Label htmlFor={inputId} className="text-xs text-muted-foreground">
+                                What-if adjustment
+                              </Label>
+                              <Input
+                                id={inputId}
+                                type="number"
+                                value={clampedValue}
+                                min={range.min}
+                                max={range.max}
+                                step={range.step}
+                                onChange={event => handleUpdateDriverModification(
+                                  mitigation.id,
+                                  idx,
+                                  clampValue(Number(event.target.value), range.min, range.max)
+                                )}
+                                className="w-24 text-right"
+                              />
+                            </div>
+                            <input
+                              type="range"
+                              min={range.min}
+                              max={range.max}
+                              step={range.step}
+                              value={clampedValue}
+                              onChange={event => handleUpdateDriverModification(
+                                mitigation.id,
+                                idx,
+                                clampValue(Number(event.target.value), range.min, range.max)
+                              )}
+                              className="w-full accent-primary"
+                            />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <DollarSign className="h-3 w-3" />
-                          {formatCurrency(mod.implementation_cost)}
-                          <Clock className="h-3 w-3 ml-2" />
-                          {mod.time_to_implement_days}d
-                        </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 </div>
                 
@@ -769,7 +1567,8 @@ export default function MitigationsPage() {
                 )}
               </CardContent>
             </Card>
-          ))}
+          )
+        })}
         </div>
       )}
     </div>

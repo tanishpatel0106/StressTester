@@ -250,6 +250,12 @@ export interface ComputationRun {
   input_assumptions: Assumption[]
   kpi_results: KPIDataPoint[]
   derived_results: DerivedKPIs[]
+  survival?: {
+    time_to_event_months: number | null
+    event_occurred: boolean
+    consecutive_months: number
+    threshold: number
+  }
   summary: {
     total_revenue_change_pct: number
     net_profit_change_pct: number
