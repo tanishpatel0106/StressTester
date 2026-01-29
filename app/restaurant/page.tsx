@@ -22,13 +22,26 @@ import { parseCSV, buildContextPack, computeBaseline } from "@/lib/restaurant/en
 import { saveContextPack, saveComputationRun, loadSampleData } from "@/lib/restaurant/storage"
 import type { CSVParseResult } from "@/lib/restaurant/types"
 
+type SupplementalEvidenceEntry = {
+  source: string
+  value: string | number
+  type?: "csv_cell" | "computed" | "user_input" | "ai_inferred"
+  row?: number
+  column?: string
+}
+
+type UploadSummary = {
+  name: string
+  entries: SupplementalEvidenceEntry[]
+}
+
 export default function RestaurantUploadPage() {
   const router = useRouter()
   const [restaurantName, setRestaurantName] = useState("")
   const [csvText, setCsvText] = useState("")
   const [contextText, setContextText] = useState("")
   const [contextFileName, setContextFileName] = useState<string | null>(null)
-  const [additionalUploads, setAdditionalUploads] = useState<Array<{ name: string; content: string }>>([])
+  const [additionalUploads, setAdditionalUploads] = useState<UploadSummary[]>([])
   const [parseResult, setParseResult] = useState<CSVParseResult | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -40,6 +53,43 @@ export default function RestaurantUploadPage() {
       reader.onerror = () => reject(reader.error)
       reader.readAsText(file)
     })
+
+  const buildTabularEvidence = (fileName: string, rows: Array<Array<string | number>>) => {
+    if (rows.length === 0) return []
+    const headers = rows[0].map((header, index) =>
+      String(header || `Column ${index + 1}`)
+    )
+    const entries: SupplementalEvidenceEntry[] = []
+
+    rows.slice(1).forEach((row, rowIndex) => {
+      row.forEach((value, colIndex) => {
+        if (value === "" || value == null) return
+        entries.push({
+          source: fileName,
+          type: "csv_cell",
+          row: rowIndex + 1,
+          column: headers[colIndex] ?? `Column ${colIndex + 1}`,
+          value,
+        })
+      })
+    })
+
+    return entries
+  }
+
+  const parseTabularFile = async (file: File) => {
+    const extension = file.name.split(".").pop()?.toLowerCase()
+    if (extension === "csv") {
+      const text = await readFileAsText(file)
+      const rows = text
+        .split(/\r?\n/)
+        .map((line) => line.split(",").map((value) => value.trim()))
+        .filter((row) => row.some((value) => value !== ""))
+      return buildTabularEvidence(file.name, rows)
+    }
+
+    return null
+  }
 
   const handleParse = useCallback(() => {
     if (!csvText.trim()) {
@@ -91,10 +141,7 @@ export default function RestaurantUploadPage() {
               },
             ]
           : []),
-        ...additionalUploads.map((upload) => ({
-          source: upload.name,
-          value: upload.content,
-        })),
+        ...additionalUploads.flatMap((upload) => upload.entries),
       ]
 
       const contextPack = buildContextPack(
@@ -219,11 +266,29 @@ export default function RestaurantUploadPage() {
                   const files = Array.from(e.target.files || [])
                   if (files.length === 0) return
                   try {
-                    const contents = await Promise.all(files.map(readFileAsText))
-                    const uploads = files.map((file, index) => ({
-                      name: file.name,
-                      content: contents[index],
-                    }))
+                    const uploads = await Promise.all(
+                      files.map(async (file) => {
+                        const tabularEntries = await parseTabularFile(file)
+                        if (tabularEntries) {
+                          return {
+                            name: file.name,
+                            entries: tabularEntries,
+                          }
+                        }
+
+                        const content = await readFileAsText(file)
+                        return {
+                          name: file.name,
+                          entries: [
+                            {
+                              source: file.name,
+                              type: "user_input",
+                              value: content,
+                            },
+                          ],
+                        }
+                      })
+                    )
                     setAdditionalUploads(uploads)
                   } catch (fileError) {
                     setError(fileError instanceof Error ? fileError.message : "Failed to read additional files")
@@ -236,7 +301,7 @@ export default function RestaurantUploadPage() {
                   <ul className="mt-1 space-y-1">
                     {additionalUploads.map((file) => (
                       <li key={file.name} className="font-mono">
-                        {file.name}
+                        {file.name} ({file.entries.length} evidence rows)
                       </li>
                     ))}
                   </ul>

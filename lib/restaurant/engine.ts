@@ -170,7 +170,13 @@ export function buildContextPack(
   csvRows: CSVRow[],
   restaurantName: string,
   datasetId: string,
-  supplementalEvidence: Array<{ source: string; value: string }> = []
+  supplementalEvidence: Array<{
+    source: string
+    value: string | number
+    type?: Evidence['type']
+    row?: number
+    column?: string
+  }> = []
 ): ContextPack {
   const kpi_series = csvRows.map(computeKpiSpine)
   const derived_series = kpi_series.map(computeDerivedKpis)
@@ -194,11 +200,13 @@ export function buildContextPack(
   })
 
   supplementalEvidence.forEach((entry) => {
-    if (!entry.value.trim()) return
+    if (typeof entry.value === 'string' && !entry.value.trim()) return
     evidence_registry.push({
       id: `E${evidence_registry.length + 1}`,
-      type: 'user_input',
+      type: entry.type ?? 'user_input',
       source: entry.source,
+      row: entry.row,
+      column: entry.column,
       value: entry.value,
       timestamp: new Date().toISOString(),
     })
