@@ -115,7 +115,7 @@ Return a JSON object with an "assumptions" array. Each assumption must have:
       }
     })
   } catch (error) {
-    console.error("[v0] extractAssumptions error:", error)
+    console.error(" extractAssumptions error:", error)
     throw error
   }
 }
@@ -192,7 +192,7 @@ Return a JSON object with a "scenarios" array. Each scenario must have:
       }
     })
   } catch (error) {
-    console.error("[v0] generateScenarios error:", error)
+    console.error(" generateScenarios error:", error)
     throw error
   }
 }
@@ -270,7 +270,7 @@ Provide 3-4 items in each array.`
       monitoringMetrics: object.monitoringMetrics,
     }
   } catch (error) {
-    console.error("[v0] generateMitigation error:", error)
+    console.error(" generateMitigation error:", error)
     throw error
   }
 }
@@ -340,7 +340,7 @@ Return a JSON object with:
       recommendations: object.recommendations,
     }
   } catch (error) {
-    console.error("[v0] generateExecutiveSummary error:", error)
+    console.error(" generateExecutiveSummary error:", error)
     throw error
   }
 }

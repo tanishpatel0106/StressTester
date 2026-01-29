@@ -160,7 +160,7 @@ export default function StressTesterPage() {
 
       setAnalysisPhase("complete")
     } catch (error) {
-      console.error("[v0] AI Analysis error:", error)
+      console.error(" AI Analysis error:", error)
       setAnalysisError(error instanceof Error ? error.message : "An error occurred during analysis")
       setAnalysisPhase("error")
     } finally {

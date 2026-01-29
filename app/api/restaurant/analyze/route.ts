@@ -148,7 +148,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Unknown action" }, { status: 400 })
     }
   } catch (error) {
-    console.error("[v0] Analysis error:", error)
+    console.error(" Analysis error:", error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Analysis failed" },
       { status: 500 }
