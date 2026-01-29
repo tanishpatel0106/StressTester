@@ -224,6 +224,25 @@ export default function ScenariosPage() {
     }
   }
 
+  const latestScenarioRuns = useMemo(() => {
+    const runs = state?.scenario_computations || []
+    const latestByScenario = new Map<string, (typeof runs)[number]>()
+    for (const run of runs) {
+      if (!run.scenario_id) continue
+      const existing = latestByScenario.get(run.scenario_id)
+      if (!existing) {
+        latestByScenario.set(run.scenario_id, run)
+        continue
+      }
+      const existingTime = new Date(existing.computed_at).getTime()
+      const currentTime = new Date(run.computed_at).getTime()
+      if (currentTime >= existingTime) {
+        latestByScenario.set(run.scenario_id, run)
+      }
+    }
+    return latestByScenario
+  }, [state?.scenario_computations])
+
   const severityColor = (sev: string) => {
     switch (sev) {
       case 'critical': return 'bg-rose-500/10 text-rose-600 border-rose-500/20'
@@ -244,7 +263,7 @@ export default function ScenariosPage() {
 
   // Get scenario computation result
   const getScenarioResult = (scenarioId: string) => {
-    return state?.scenario_computations.find(r => r.scenario_id === scenarioId)
+    return latestScenarioRuns.get(scenarioId)
   }
 
   const formatKpiLabel = (name: string) => {
