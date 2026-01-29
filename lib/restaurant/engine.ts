@@ -169,7 +169,8 @@ export function parseCSV(csvText: string): CSVParseResult {
 export function buildContextPack(
   csvRows: CSVRow[],
   restaurantName: string,
-  datasetId: string
+  datasetId: string,
+  supplementalEvidence: Array<{ source: string; value: string }> = []
 ): ContextPack {
   const kpi_series = csvRows.map(computeKpiSpine)
   const derived_series = kpi_series.map(computeDerivedKpis)
@@ -189,6 +190,17 @@ export function buildContextPack(
           timestamp: new Date().toISOString(),
         })
       }
+    })
+  })
+
+  supplementalEvidence.forEach((entry) => {
+    if (!entry.value.trim()) return
+    evidence_registry.push({
+      id: `E${evidence_registry.length + 1}`,
+      type: 'user_input',
+      source: entry.source,
+      value: entry.value,
+      timestamp: new Date().toISOString(),
     })
   })
 

@@ -32,6 +32,7 @@ import {
   Edit2,
   Save,
   X,
+  Info,
 } from "lucide-react"
 import { getRestaurantState, saveAssumptionSet } from "@/lib/restaurant/storage"
 import { generateAssumptions } from "@/lib/restaurant/ai-client"
@@ -381,7 +382,7 @@ export default function AssumptionsPage() {
                       <Badge variant="secondary" className="text-xs">
                         {assumption.category}
                       </Badge>
-                      {assumption.evidence_refs.map(ref => {
+                      {assumption.evidence_refs.slice(0, 2).map(ref => {
                         const location = getEvidenceLocation(ref)
                         const anchor = getEvidenceAnchor(ref)
                         return (
@@ -441,6 +442,25 @@ export default function AssumptionsPage() {
                           </Dialog>
                         )
                       })}
+                      {assumption.evidence_refs.length > 2 && (
+                        <div className="relative group">
+                          <div className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                            <Info className="h-3 w-3" />
+                            <span>+{assumption.evidence_refs.length - 2} more</span>
+                          </div>
+                          <div className="absolute left-full top-1/2 z-20 ml-2 hidden w-64 -translate-y-1/2 rounded-md border bg-background p-3 text-xs shadow-lg group-hover:block">
+                            <p className="text-xs font-semibold text-foreground">Additional evidence</p>
+                            <ul className="mt-2 space-y-1">
+                              {assumption.evidence_refs.slice(2).map(ref => (
+                                <li key={ref} className="flex items-center justify-between gap-2">
+                                  <span className="font-mono">{ref}</span>
+                                  <span className="text-muted-foreground">{getEvidenceLocation(ref)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="rounded-md border bg-muted/30 p-3 text-xs">
                       <p className="text-muted-foreground uppercase tracking-wide">Evidence summary</p>
