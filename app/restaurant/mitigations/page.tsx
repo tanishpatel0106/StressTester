@@ -49,6 +49,8 @@ export default function MitigationsPage() {
   const [localMitigations, setLocalMitigations] = useState<Mitigation[] | null>(null)
   const [isApproved, setIsApproved] = useState(false)
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(null)
+  const [diffMode, setDiffMode] = useState(false)
+  const [diffReference, setDiffReference] = useState<"baseline" | "scenario" | "mitigated">("baseline")
 
   const state = getRestaurantState(contextPackId || '')
   const baselineRun = contextPackId ? getLatestBaseline(contextPackId) : null
@@ -288,22 +290,49 @@ export default function MitigationsPage() {
 
   const chartData = useMemo(() => {
     if (!alignedSeries) return []
-    return alignedSeries.map(point => ({
-      date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
-      baselineRevenue: point.baselineKpi.total_revenue,
-      scenarioRevenue: point.scenarioKpi.total_revenue,
-      mitigatedRevenue: point.mitigatedKpi.total_revenue,
-      baselineNetProfit: point.baselineKpi.net_profit,
-      scenarioNetProfit: point.scenarioKpi.net_profit,
-      mitigatedNetProfit: point.mitigatedKpi.net_profit,
-      baselinePrimeCost: point.baselineKpi.cost_of_goods_sold + point.baselineKpi.wage_costs,
-      scenarioPrimeCost: point.scenarioKpi.cost_of_goods_sold + point.scenarioKpi.wage_costs,
-      mitigatedPrimeCost: point.mitigatedKpi.cost_of_goods_sold + point.mitigatedKpi.wage_costs,
-      baselineGrossMargin: point.baselineDerived.gross_margin_pct,
-      scenarioGrossMargin: point.scenarioDerived.gross_margin_pct,
-      mitigatedGrossMargin: point.mitigatedDerived.gross_margin_pct,
-    }))
-  }, [alignedSeries])
+    return alignedSeries.map(point => {
+      const referenceKpi = diffReference === "mitigated"
+        ? point.mitigatedKpi
+        : diffReference === "scenario"
+          ? point.scenarioKpi
+          : point.baselineKpi
+      const referenceDerived = diffReference === "mitigated"
+        ? point.mitigatedDerived
+        : diffReference === "scenario"
+          ? point.scenarioDerived
+          : point.baselineDerived
+
+      const primeCost = (kpi: typeof point.baselineKpi) => kpi.cost_of_goods_sold + kpi.wage_costs
+      const applyDiff = (value: number, referenceValue: number) => (diffMode ? value - referenceValue : value)
+
+      return {
+        date: new Date(point.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        baselineRevenue: applyDiff(point.baselineKpi.total_revenue, referenceKpi.total_revenue),
+        scenarioRevenue: applyDiff(point.scenarioKpi.total_revenue, referenceKpi.total_revenue),
+        mitigatedRevenue: applyDiff(point.mitigatedKpi.total_revenue, referenceKpi.total_revenue),
+        baselineNetProfit: applyDiff(point.baselineKpi.net_profit, referenceKpi.net_profit),
+        scenarioNetProfit: applyDiff(point.scenarioKpi.net_profit, referenceKpi.net_profit),
+        mitigatedNetProfit: applyDiff(point.mitigatedKpi.net_profit, referenceKpi.net_profit),
+        baselinePrimeCost: applyDiff(primeCost(point.baselineKpi), primeCost(referenceKpi)),
+        scenarioPrimeCost: applyDiff(primeCost(point.scenarioKpi), primeCost(referenceKpi)),
+        mitigatedPrimeCost: applyDiff(primeCost(point.mitigatedKpi), primeCost(referenceKpi)),
+        baselineGrossMargin: applyDiff(point.baselineDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
+        scenarioGrossMargin: applyDiff(point.scenarioDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
+        mitigatedGrossMargin: applyDiff(point.mitigatedDerived.gross_margin_pct, referenceDerived.gross_margin_pct),
+      }
+    })
+  }, [alignedSeries, diffMode, diffReference])
+
+  const diffLabel = diffReference === "baseline"
+    ? "Baseline"
+    : diffReference === "scenario"
+      ? "Stressed"
+      : "Mitigated"
+
+  const formatCurrencyDelta = (value: number) => {
+    const sign = value >= 0 ? "+" : "-"
+    return `${sign}${formatCurrency(Math.abs(value))}`
+  }
 
   const categoryColor = (cat: string) => {
     switch (cat) {
@@ -525,10 +554,39 @@ export default function MitigationsPage() {
       {chartData.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Scenario vs Mitigation Trends</CardTitle>
-            <CardDescription>
-              Overlayed baseline, stressed, and mitigated KPI trajectories.
-            </CardDescription>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <CardTitle className="text-base">Scenario vs Mitigation Trends</CardTitle>
+                <CardDescription>
+                  Overlayed baseline, stressed, and mitigated KPI trajectories.
+                  {diffMode ? ` Showing deltas vs ${diffLabel}.` : ""}
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-2">
+                  <Switch checked={diffMode} onCheckedChange={setDiffMode} />
+                  <span className="text-xs font-medium text-muted-foreground">Diff mode</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Compare vs</span>
+                  {[
+                    { value: "baseline", label: "Baseline" },
+                    { value: "scenario", label: "Stressed" },
+                    { value: "mitigated", label: "Mitigated" },
+                  ].map(option => (
+                    <Button
+                      key={option.value}
+                      size="sm"
+                      variant={diffReference === option.value ? "default" : "outline"}
+                      onClick={() => setDiffReference(option.value as typeof diffReference)}
+                      disabled={!diffMode}
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="grid gap-6 lg:grid-cols-2">
             <div className="h-64">
@@ -537,12 +595,15 @@ export default function MitigationsPage() {
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatCurrency(value)} />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={value => (diffMode ? formatCurrencyDelta(value) : formatCurrency(value))}
+                  />
+                  <Tooltip formatter={(value: number) => (diffMode ? formatCurrencyDelta(value) : formatCurrency(value))} />
                   <Legend />
-                  <Line type="monotone" dataKey="baselineRevenue" name="Baseline" stroke="#2563eb" strokeWidth={2} />
-                  <Line type="monotone" dataKey="scenarioRevenue" name="Stressed" stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedRevenue" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="baselineRevenue" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioRevenue" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedRevenue" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -552,12 +613,15 @@ export default function MitigationsPage() {
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatCurrency(value)} />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={value => (diffMode ? formatCurrencyDelta(value) : formatCurrency(value))}
+                  />
+                  <Tooltip formatter={(value: number) => (diffMode ? formatCurrencyDelta(value) : formatCurrency(value))} />
                   <Legend />
-                  <Line type="monotone" dataKey="baselineNetProfit" name="Baseline" stroke="#2563eb" strokeWidth={2} />
-                  <Line type="monotone" dataKey="scenarioNetProfit" name="Stressed" stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedNetProfit" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="baselineNetProfit" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioNetProfit" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedNetProfit" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -567,12 +631,15 @@ export default function MitigationsPage() {
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatCurrency(value)} />
-                  <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={value => (diffMode ? formatCurrencyDelta(value) : formatCurrency(value))}
+                  />
+                  <Tooltip formatter={(value: number) => (diffMode ? formatCurrencyDelta(value) : formatCurrency(value))} />
                   <Legend />
-                  <Line type="monotone" dataKey="baselinePrimeCost" name="Baseline" stroke="#2563eb" strokeWidth={2} />
-                  <Line type="monotone" dataKey="scenarioPrimeCost" name="Stressed" stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedPrimeCost" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="baselinePrimeCost" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioPrimeCost" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedPrimeCost" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -582,12 +649,15 @@ export default function MitigationsPage() {
                 <LineChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tick={{ fontSize: 12 }} />
-                  <YAxis tick={{ fontSize: 12 }} tickFormatter={value => formatPercent(value)} />
-                  <Tooltip formatter={(value: number) => formatPercent(value)} />
+                  <YAxis
+                    tick={{ fontSize: 12 }}
+                    tickFormatter={value => (diffMode ? formatDelta(value) : formatPercent(value))}
+                  />
+                  <Tooltip formatter={(value: number) => (diffMode ? formatDelta(value) : formatPercent(value))} />
                   <Legend />
-                  <Line type="monotone" dataKey="baselineGrossMargin" name="Baseline" stroke="#2563eb" strokeWidth={2} />
-                  <Line type="monotone" dataKey="scenarioGrossMargin" name="Stressed" stroke="#f97316" strokeWidth={2} />
-                  <Line type="monotone" dataKey="mitigatedGrossMargin" name="Mitigated" stroke="#10b981" strokeWidth={2} />
+                  <Line type="monotone" dataKey="baselineGrossMargin" name={`Baseline${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#2563eb" strokeWidth={2} />
+                  <Line type="monotone" dataKey="scenarioGrossMargin" name={`Stressed${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#f97316" strokeWidth={2} />
+                  <Line type="monotone" dataKey="mitigatedGrossMargin" name={`Mitigated${diffMode ? ` Δ vs ${diffLabel}` : ""}`} stroke="#10b981" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
