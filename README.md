@@ -12,7 +12,7 @@ StressTester delivers an end-to-end workflow for financial stress testing: inges
 
 ## Demo
 
-- **Live demo:** https://your-demo-link.com
+- **Live demo:** [https://your-demo-link.com](https://stress-tester-five.vercel.app/)
 - **Screenshots / GIFs:**
   1. ![Assumption extraction UI](docs/screenshots/assumption-extraction.png)
   2. ![Scenario generator UI](docs/screenshots/scenario-generator.png)
